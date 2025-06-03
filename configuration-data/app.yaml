@@ -1,4 +1,4 @@
-name: configuration-data
+name: weather-data-generator
 language: python
 variables:
   - name: output
