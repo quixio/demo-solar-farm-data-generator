@@ -1,4 +1,4 @@
-name: sample-data
+name: solar-data-generator
 language: python
 variables:
   - name: output
