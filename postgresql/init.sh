@@ -5,52 +5,43 @@ TARGET_DIR=$PGDATA
 TARGET_USER="postgres"
 TARGET_GROUP="postgres"
 
-# Check if directory already exists
-if [ ! -d "$TARGET_DIR" ]; then
-  su -s /bin/sh -c "mkdir -p '$TARGET_DIR'" "$TARGET_USER" 2>/dev/null || {
-    mkdir -p "$TARGET_DIR" || {
-      echo "❌ Failed to create directory as root"
-      exit 1
-    }
+# Function to initialize the database
+initialize_db() {
+    echo "Initializing PostgreSQL database in $TARGET_DIR..."
+    # Ensure the directory is empty before initialization
+    rm -rf "$TARGET_DIR"/* 2>/dev/null || true
+    # Run initdb with the postgres user
+    su -s /bin/sh -c "initdb --username=$POSTGRES_USER --pwfile=<(echo "$POSTGRES_PASSWORD") -D $TARGET_DIR" "$TARGET_USER"
+    
+    # Update configuration for port 80
+    echo "port = 80" >> "$TARGET_DIR/postgresql.conf"
+    echo "listen_addresses = '*'" >> "$TARGET_DIR/postgresql.conf"
+    
+    # Update pg_hba.conf to allow connections from any IP
+    echo "host all all 0.0.0.0/0 md5" >> "$TARGET_DIR/pg_hba.conf"
+}
 
-    chown "$TARGET_USER:$TARGET_GROUP" "$TARGET_DIR" 2>/dev/null || {
-      echo "❌ Failed to chown directory to $TARGET_USER"
-      exit 1
-    }
-  }
-fi
-
-# Get actual uid and gid assigned
-ACTUAL_DIR_UID=$(stat -c '%u' "$TARGET_DIR")
-ACTUAL_DIR_GID=$(stat -c '%g' "$TARGET_DIR")
-
-# Update user/group if needed
-TARGET_USER_UID=$(id -u "$TARGET_USER")
-TARGET_USER_GID=$(id -g "$TARGET_USER")
-
-if [ "$ACTUAL_DIR_UID" -ne "$TARGET_USER_UID" ] && [ "$ACTUAL_DIR_UID" -ne 0 ]; then
-  usermod -u "$ACTUAL_DIR_UID" "$TARGET_USER" || {
-    echo "❌ Failed to update $TARGET_USER UID"
-    exit 1
-  }
-fi
-
-if [ "$ACTUAL_DIR_GID" -ne "$TARGET_USER_GID" ] && [ "$ACTUAL_DIR_GID" -ne 0 ]; then
-  groupmod -g "$ACTUAL_DIR_GID" "$TARGET_GROUP" || {
-    echo "❌ Failed to update $TARGET_GROUP GID"
-    exit 1
-  }
-fi
-
-# Create or update postgresql.conf to ensure it uses port 80
-POSTGRESQL_CONF="$PGDATA/postgresql.conf"
-if [ -f "$POSTGRESQL_CONF" ]; then
-  # Update existing config
-  sed -i 's/^#*\s*port\s*=.*/port = 80/' "$POSTGRESQL_CONF"
+# Check if directory exists and has content
+if [ -d "$TARGET_DIR" ] && [ "$(ls -A $TARGET_DIR 2>/dev/null)" ]; then
+    echo "Data directory $TARGET_DIR exists and is not empty"
+    
+    # Check if it's a valid PostgreSQL data directory
+    if [ ! -f "$TARGET_DIR/PG_VERSION" ]; then
+        echo "Directory exists but is not a valid PostgreSQL data directory. Reinitializing..."
+        initialize_db
+    else
+        echo "Existing PostgreSQL data directory found. Using existing data."
+    fi
 else
-  # Create new config with port 80
-  echo "port = 80" >> "$POSTGRESQL_CONF"
+    # Create the directory if it doesn't exist
+    mkdir -p "$TARGET_DIR"
+    chown -R "$TARGET_USER:$TARGET_GROUP" "$TARGET_DIR"
+    initialize_db
 fi
 
-# Ensure PostgreSQL listens on all interfaces and uses port 80
-exec su -s /bin/sh $TARGET_USER -c "docker-entrypoint.sh postgres -c listen_addresses='*' -c port=80"
+# Fix permissions
+chown -R "$TARGET_USER:$TARGET_GROUP" "$TARGET_DIR"
+chmod -R 0700 "$TARGET_DIR"
+
+# Start PostgreSQL with port 80 configuration
+exec su -s /bin/sh -c "docker-entrypoint.sh postgres -c listen_addresses='*' -c port=80" "$TARGET_USER"
