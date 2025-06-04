@@ -1,0 +1,21 @@
+name: postgresql
+language: docker
+variables:
+  - name: POSTGRES_USER
+    inputType: FreeText
+    description: The root username to initialize PostgreSQL with
+    defaultValue: admin
+    required: true
+  - name: POSTGRES_PASSWORD
+    inputType: Secret
+    description: The root password to initialize MongoDB with
+    defaultValue: postgres_password
+    required: true
+  - name: POSTGRES_DB
+    inputType: FreeText
+    description: The default database name to initialize PostgreSQL with
+    defaultValue: quix
+    required: true
+dockerfile: dockerfile
+defaultFile: dockerfile
+libraryItemId: postgresql
