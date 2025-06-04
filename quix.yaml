@@ -128,6 +128,32 @@ deployments:
         description: The default database name to initialize PostgreSQL with
         required: true
         value: quix
+  - name: Grafana
+    application: grafana
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 200
+      memory: 800
+      replicas: 1
+    publicAccess:
+      enabled: true
+      urlPrefix: grafana
+    network:
+      serviceName: grafana
+      ports:
+        - port: 80
+          targetPort: 3000
+    variables:
+      - name: GF_SECURITY_ADMIN_PASSWORD
+        inputType: Secret
+        description: Password for the admin user
+        required: true
+        secretKey: postgres_password
+      - name: INFLUXDB_TOKEN
+        inputType: Secret
+        description: The optional InfluxDB Token to use
+        secretKey: postgres_password
 
 # This section describes the Topics of the data pipeline
 topics:
