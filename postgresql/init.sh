@@ -42,4 +42,15 @@ if [ "$ACTUAL_DIR_GID" -ne "$TARGET_USER_GID" ] && [ "$ACTUAL_DIR_GID" -ne 0 ]; 
   }
 fi
 
-exec su -s /bin/sh $TARGET_USER -c "docker-entrypoint.sh postgres -c listen_addresses=*"
+# Create or update postgresql.conf to ensure it uses port 80
+POSTGRESQL_CONF="$PGDATA/postgresql.conf"
+if [ -f "$POSTGRESQL_CONF" ]; then
+  # Update existing config
+  sed -i 's/^#*\s*port\s*=.*/port = 80/' "$POSTGRESQL_CONF"
+else
+  # Create new config with port 80
+  echo "port = 80" >> "$POSTGRESQL_CONF"
+fi
+
+# Ensure PostgreSQL listens on all interfaces and uses port 80
+exec su -s /bin/sh $TARGET_USER -c "docker-entrypoint.sh postgres -c listen_addresses='*' -c port=80"
