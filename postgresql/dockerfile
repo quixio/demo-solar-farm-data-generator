@@ -5,7 +5,7 @@ ENV PGDATA=/app/state/pgdata
 ENV POSTGRES_USER=admin
 ENV POSTGRES_DB=quix
 
-EXPOSE 5432
+EXPOSE 80
 
 # Define the default command to run when starting the container
 USER root
