@@ -107,6 +107,9 @@ deployments:
       cpu: 1000
       memory: 8000
       replicas: 1
+    publicAccess:
+      enabled: true
+      urlPrefix: postgresql
     network:
       serviceName: postgresql
       ports:
