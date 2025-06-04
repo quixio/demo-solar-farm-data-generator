@@ -114,7 +114,7 @@ deployments:
       serviceName: postgresql
       ports:
         - port: 80
-          targetPort: 5432
+          targetPort: 80
     variables:
       - name: POSTGRES_USER
         inputType: FreeText
