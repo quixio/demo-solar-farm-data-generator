@@ -99,6 +99,35 @@ deployments:
         inputType: InputTopic
         description: Name of the input topic to listen to.
         value: configuration
+  - name: postgreSQL
+    application: postgresql
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 1000
+      memory: 8000
+      replicas: 1
+    network:
+      serviceName: postgresql
+      ports:
+        - port: 80
+          targetPort: 5432
+    variables:
+      - name: POSTGRES_USER
+        inputType: FreeText
+        description: The root username to initialize PostgreSQL with
+        required: true
+        value: admin
+      - name: POSTGRES_PASSWORD
+        inputType: Secret
+        description: The root password to initialize MongoDB with
+        required: true
+        secretKey: postgres_password
+      - name: POSTGRES_DB
+        inputType: FreeText
+        description: The default database name to initialize PostgreSQL with
+        required: true
+        value: quix
 
 # This section describes the Topics of the data pipeline
 topics:
