@@ -1,0 +1,15 @@
+name: grafana
+language: docker
+variables:
+  - name: GF_SECURITY_ADMIN_PASSWORD
+    inputType: Secret
+    description: Password for the admin user
+    defaultValue: postgres_password
+    required: true
+  - name: INFLUXDB_TOKEN
+    inputType: Secret
+    description: The optional InfluxDB Token to use
+    defaultValue: postgres_password
+dockerfile: dockerfile
+defaultFile: dockerfile
+libraryItemId: grafana
