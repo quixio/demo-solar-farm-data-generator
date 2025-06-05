@@ -181,3 +181,4 @@ deployments:
 topics:
   - name: configuration
   - name: solar-data
+  - name: solar-farm
