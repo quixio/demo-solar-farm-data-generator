@@ -139,6 +139,10 @@ class SolarDataGenerator(Source):
 
     def generate_panel_data(self, panel: SolarPanel, current_time: int) -> dict:
         """Generate data for a single solar panel."""
+
+        # update current_time
+        self.current_time = int(time.time() * 1_000_000_000)  # Current time in nanoseconds
+
         # Get current hour with fractional part for smooth transitions
         seconds_in_day = (current_time // 1000000000) % 86400
         hour = seconds_in_day / 3600.0  # Convert to fractional hours
