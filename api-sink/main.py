@@ -16,7 +16,7 @@ from typing import List, Dict, Any
 # load_dotenv()
 
 # API endpoint configuration
-API_BASE_URL = "https://gateway-demo-joinsdemo-prod.demo.quix.io"
+API_BASE_URL = os.environ["API_BASE_URL"]
 
 
 class MyApiSink(BatchingSink):
