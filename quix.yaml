@@ -197,7 +197,7 @@ deployments:
         value: configuration
       - name: API_BASE_URL
         inputType: FreeText
-        value: https://gateway-demo-joinsdemo-prod.demo.quix.io
+        value: https://httpapiweather-3392459-demo-quixmcpserverplayground-dev.demo.quix.io
 
 # This section describes the Topics of the data pipeline
 topics:
