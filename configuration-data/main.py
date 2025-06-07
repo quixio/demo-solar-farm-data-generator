@@ -66,7 +66,7 @@ class WeatherForecastGenerator(Source):
         
         # Configuration
         self.location = location
-        self.time_step = 5 * 60 * 1_000_000_000  # 5 minutes in nanoseconds
+        self.time_step = 5 * 1_000_000_000  # 5 seconds in nanoseconds
         self.current_time = int(time.time() * 1_000_000_000)  # Current time in ns
         
         # Weather state that changes slowly over time
@@ -146,8 +146,8 @@ class WeatherForecastGenerator(Source):
                 self.produce(key=event_serialized.key, value=event_serialized.value)
                 print(f"Weather forecast for {self.location} at {forecast.timestamp}")
                 
-                # Sleep for 5 minutes between updates
-                time.sleep(300)
+                # Sleep for 5 seconds between updates
+                time.sleep(5)
                 
             except Exception as e:
                 print(f"Error generating weather forecast: {str(e)}")
