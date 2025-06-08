@@ -197,7 +197,7 @@ deployments:
         value: configuration
       - name: API_BASE_URL
         inputType: FreeText
-        value: https://httpapiweathersource-3642f34-demo-webinarmcpplayground-test0806.demo.quix.io
+        value: https://gateway-demo-webinarsolarfarm-final.demo.quix.io
 
 # This section describes the Topics of the data pipeline
 topics:
