@@ -197,7 +197,7 @@ deployments:
         value: configuration
       - name: API_BASE_URL
         inputType: FreeText
-        value: https://gateway-demo-webinarsolarfarm-final.demo.quix.io
+        value: https://gateway-demo-webinarsolarfarm-btestv2.demo.quix.io
 
 # This section describes the Topics of the data pipeline
 topics:
