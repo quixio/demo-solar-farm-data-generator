@@ -1,5 +1,10 @@
 name: test
 language: python
+variables:
+  - name: pwd
+    inputType: Secret
+    multiline: false
+    defaultValue: postgres_password
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
