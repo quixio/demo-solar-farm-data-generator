@@ -1,1 +1,1 @@
-quixstreams
+quixstreams[postgresql]
