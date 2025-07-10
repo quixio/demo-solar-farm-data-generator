@@ -24,6 +24,7 @@ variables:
   - name: TIMESCALE_PASSWORD
     inputType: Secret
     description: TimescaleDB password (stored as Quix Secret)
+    defaultValue: TIMESCALE_PASSWORD
     required: true
   - name: TIMESCALE_TABLE
     inputType: FreeText
@@ -35,9 +36,6 @@ variables:
     description: Input topic to read solar panel data from
     defaultValue: solar-data
     required: true
-  - name: input
-    inputType: InputTopic
-    defaultValue: solar-data
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
