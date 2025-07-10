@@ -12,16 +12,12 @@ app = Application(
 
 # Configure TimescaleDB/PostgreSQL connection
 postgresql_sink = PostgreSQLSink(
-    host=os.environ.get("TIMESCALE_HOST"),
+    host=os.environ.get("TIMESCALE_HOST", "timescaledb"),
     port=int(os.environ.get("TIMESCALE_PORT", "5432")),
-    dbname=os.environ.get("TIMESCALE_DATABASE"),
-    user=os.environ.get("TIMESCALE_USERNAME"),
-    password=os.environ.get("TIMESCALE_PASSWORD"),  # Quix Secret
-    table_name=os.environ.get("TIMESCALE_TABLE", "solar_panel_data"),
-    table_auto_create=True,
-    schema_auto_update=True,
-    ddl_timeout=30,
-    insert_timeout=30
+    dbname=os.environ.get("TIMESCALE_DATABASE", "metrics"),
+    user=os.environ.get("TIMESCALE_USERNAME", "tsadmin"),
+    password=os.environ.get("TIMESCALE_PASSWORD", "password"),  # Quix Secret
+    table_name=os.environ.get("TIMESCALE_TABLE", "solar_panel_data")
 )
 
 # Define the input topic
@@ -62,7 +58,7 @@ if __name__ == "__main__":
     print("Starting TimescaleDB sink for solar panel data...")
     print(f"Reading from topic: {os.environ.get('INPUT_TOPIC', 'solar-data')}")
     print(f"Writing to TimescaleDB table: {os.environ.get('TIMESCALE_TABLE', 'solar_panel_data')}")
-    print(f"Database: {os.environ.get('TIMESCALE_DATABASE')} on {os.environ.get('TIMESCALE_HOST')}:{os.environ.get('TIMESCALE_PORT', '5432')}")
+    print(f"Database: {os.environ.get('TIMESCALE_DATABASE', 'metrics')} on {os.environ.get('TIMESCALE_HOST', 'timescaledb')}:{os.environ.get('TIMESCALE_PORT', '5432')}")
     
     # Run the application
     app.run()
