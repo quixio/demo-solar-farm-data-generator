@@ -10,6 +10,10 @@ app = Application(
     auto_offset_reset="latest"
 )
 
+# Debug: Print environment variables
+print(f"DEBUG - TIMESCALE_PASSWORD value: '{os.environ.get('TIMESCALE_PASSWORD', 'NOT_FOUND')}'")
+print(f"DEBUG - Available env vars containing TIMESCALE: {[k for k in os.environ.keys() if 'TIMESCALE' in k]}")
+
 # Configure TimescaleDB/PostgreSQL connection
 postgresql_sink = PostgreSQLSink(
     host=os.environ.get("TIMESCALE_HOST", "timescaledb"),
