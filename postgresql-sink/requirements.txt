@@ -1,1 +1,2 @@
-quixstreams[postgresql]
+quixstreams
+psycopg2-binary
