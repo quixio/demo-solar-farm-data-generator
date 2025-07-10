@@ -35,6 +35,9 @@ variables:
     description: Input topic to read solar panel data from
     defaultValue: solar-data
     required: true
+  - name: input
+    inputType: InputTopic
+    defaultValue: solar-data
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
