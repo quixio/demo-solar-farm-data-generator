@@ -1,28 +1,18 @@
-FROM python:3.12.5-slim-bookworm
-			
-# Set environment variables for non-interactive setup and unbuffered output
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
-    PYTHONIOENCODING=UTF-8 \
-    PYTHONPATH="/app"
-			
-# Build argument for setting the main app path
-ARG MAINAPPPATH=.
-			
-# Set working directory inside the container
-WORKDIR /app
-			
-# Copy requirements to leverage Docker cache
-COPY "${MAINAPPPATH}/requirements.txt" "${MAINAPPPATH}/requirements.txt"
-			
-# Install dependencies without caching
-RUN pip install --no-cache-dir -r "${MAINAPPPATH}/requirements.txt"
-			
-# Copy entire application into container
-COPY . .
-			
-# Set working directory to main app path
-WORKDIR "/app/${MAINAPPPATH}"
-			
-# Define the container's startup command
-ENTRYPOINT ["python3", "main.py"]
+# syntax=docker/dockerfile:1
+
+# 1. Use the official TimescaleDB image that already wraps PostgreSQL
+FROM timescale/timescaledb:latest-pg17
+
+# 2. Set credentials and default DB **inside** the image
+ENV POSTGRES_USER=tsadmin \
+    POSTGRES_PASSWORD=tsadminpass \
+    POSTGRES_DB=metrics \
+    TIMESCALEDB_TELEMETRY=off
+
+# 3. Expose the well-known port (redundant but explicit)
+EXPOSE 5432
+
+# 4. (Optional) seed scripts – uncomment if you need them
+# COPY initdb.sql /docker-entrypoint-initdb.d/
+
+# Parent image’s entrypoint starts Postgres + Timescale, no CMD needed
