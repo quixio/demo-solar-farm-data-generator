@@ -8,6 +8,7 @@ variables:
   - name: TIMESCALE_HOST
     inputType: FreeText
     description: TimescaleDB server hostname
+    defaultValue: timescaledb
     required: true
   - name: TIMESCALE_PORT
     inputType: FreeText
@@ -16,14 +17,17 @@ variables:
   - name: TIMESCALE_DATABASE
     inputType: FreeText
     description: TimescaleDB database name
+    defaultValue: metrics
     required: true
   - name: TIMESCALE_USER
     inputType: FreeText
     description: TimescaleDB username
+    defaultValue: tsadmin
     required: true
   - name: TIMESCALE_PASSWORD
     inputType: Secret
     description: TimescaleDB password
+    defaultValue: TIMESCALE_PASSWORD
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
