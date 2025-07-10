@@ -18,12 +18,12 @@ def main():
         auto_offset_reset="latest"
     )
     
-    # TimescaleDB connection parameters
+    # TimescaleDB connection parameters from environment variables
     db_config = {
-        'host': 'timescaledb',
-        'port': 5432,
-        'database': 'metrics',
-        'user': 'tsadmin',
+        'host': os.environ['TIMESCALE_HOST'],
+        'port': int(os.environ.get('TIMESCALE_PORT', '5432')),
+        'database': os.environ['TIMESCALE_DATABASE'],
+        'user': os.environ['TIMESCALE_USER'],
         'password': os.environ['TIMESCALE_PASSWORD']
     }
     
