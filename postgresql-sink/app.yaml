@@ -1,4 +1,4 @@
-name: timescaledb-sink-test
+name: timescaledb-sink
 language: python
 variables:
   - name: input
