@@ -1,18 +1,10 @@
-# syntax=docker/dockerfile:1
+# Use the official pgAdmin image from the Docker library
+FROM dpage/pgadmin4:latest
 
-# 1. Use the official TimescaleDB image that already wraps PostgreSQL
-FROM timescale/timescaledb:latest-pg17
+# Set environment variables
+ENV PGADMIN_DEFAULT_EMAIL=admin@admin.com
+ENV PGADMIN_DEFAULT_PASSWORD=root
+ENV PGADMIN_LISTEN_ADDRESS=0.0.0.0
 
-# 2. Set credentials and default DB **inside** the image
-ENV POSTGRES_USER=tsadmin \
-    POSTGRES_PASSWORD=tsadminpass \
-    POSTGRES_DB=metrics \
-    TIMESCALEDB_TELEMETRY=off
-
-# 3. Expose the well-known port (redundant but explicit)
-EXPOSE 5432
-
-# 4. (Optional) seed scripts – uncomment if you need them
-# COPY initdb.sql /docker-entrypoint-initdb.d/
-
-# Parent image’s entrypoint starts Postgres + Timescale, no CMD needed
+# Expose port 80 on which pgAdmin runs
+EXPOSE 80
