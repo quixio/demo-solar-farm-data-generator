@@ -3,9 +3,7 @@ language: python
 variables:
   - name: input
     inputType: InputTopic
-    description: This is the input topic
-    defaultValue: input-data
-    required: true
+    defaultValue: solar-data
   - name: POSTGRES_HOST
     inputType: FreeText
     description: Host address for the PostgreSQL instance.
