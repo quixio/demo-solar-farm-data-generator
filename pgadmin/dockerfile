@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+
+# 1. Use the official TimescaleDB image that already wraps PostgreSQL
+FROM timescale/timescaledb:latest-pg17
+
+# 2. Set credentials and default DB **inside** the image
+ENV POSTGRES_USER=tsadmin \
+    POSTGRES_PASSWORD=tsadminpass \
+    POSTGRES_DB=metrics \
+    TIMESCALEDB_TELEMETRY=off
+
+# 3. Expose the well-known port (redundant but explicit)
+EXPOSE 5432
+
+# 4. (Optional) seed scripts – uncomment if you need them
+# COPY initdb.sql /docker-entrypoint-initdb.d/
+
+# Parent image’s entrypoint starts Postgres + Timescale, no CMD needed
