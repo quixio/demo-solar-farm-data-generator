@@ -47,10 +47,6 @@ variables:
     inputType: FreeText
     description: Batch commit timeout in seconds
     defaultValue: 1
-  - name: BATCH_SIZE
-    inputType: FreeText
-    description: Batch size for committing data
-    defaultValue: 1000
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
