@@ -38,6 +38,10 @@ sdf = app.dataframe(input_topic)
 def transform_solar_data(row):
     """Transform solar panel data for TimescaleDB storage"""
     try:
+        # DEBUG: Print the full message content to understand structure
+        print(f"DEBUG - Full message content: {row}")
+        print(f"DEBUG - Message keys: {list(row.keys()) if hasattr(row, 'keys') else 'Not a dict'}")
+        
         # Parse the JSON value from the Kafka message
         data = json.loads(row['value'])
         
@@ -68,6 +72,8 @@ def transform_solar_data(row):
         }
     except Exception as e:
         print(f"Error processing solar data: {e}")
+        print(f"DEBUG - Row type: {type(row)}")
+        print(f"DEBUG - Row content: {row}")
         return None
 
 # Apply transformation and filter out None values
