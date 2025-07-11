@@ -39,10 +39,6 @@ variables:
     inputType: FreeText
     description: Automatically update table schema
     defaultValue: true
-  - name: CONSUMER_GROUP_NAME
-    inputType: FreeText
-    description: Kafka consumer group name
-    defaultValue: solar-timescale-sink
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
