@@ -14,7 +14,7 @@ timescale_sink = PostgreSQLSink(
     port=int(os.getenv("TIMESCALE_PORT", "5432")),
     dbname=os.getenv("TIMESCALE_DBNAME", "metrics"),
     user=os.getenv("TIMESCALE_USER", "tsadmin"),
-    password=os.getenv("TIMESCALE_PASSWORD"),
+    password=os.getenv("TIMESCALE_PASSWORD_KEY"),
     table_name=os.getenv("TIMESCALE_TABLE", "solar_data"),
     schema_name=os.getenv("TIMESCALE_SCHEMA", "public"),
     schema_auto_update=os.getenv("SCHEMA_AUTO_UPDATE", "true").lower() == "true",
