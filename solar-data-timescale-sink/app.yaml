@@ -6,11 +6,6 @@ variables:
     description: Input topic containing solar panel data
     defaultValue: solar-data
     required: true
-  - name: TIMESCALE_HOST
-    inputType: FreeText
-    description: TimescaleDB host address
-    defaultValue: timescaledb
-    required: true
   - name: TIMESCALE_PORT
     inputType: FreeText
     description: TimescaleDB port number
