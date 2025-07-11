@@ -6,11 +6,6 @@ variables:
     description: Input topic containing solar panel data
     defaultValue: solar-data
     required: true
-  - name: TIMESCALE_TABLE
-    inputType: FreeText
-    description: Target table name for solar data
-    defaultValue: solar_data
-    required: true
   - name: TIMESCALE_SCHEMA
     inputType: FreeText
     description: Database schema name
