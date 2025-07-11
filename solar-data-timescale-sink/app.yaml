@@ -26,10 +26,6 @@ variables:
     description: TimescaleDB username
     defaultValue: tsadmin
     required: true
-  - name: TIMESCALE_PASSWORD
-    inputType: Secret
-    description: TimescaleDB password (stored as secret)
-    required: true
   - name: TIMESCALE_TABLE
     inputType: FreeText
     description: Target table name for solar data
@@ -55,6 +51,11 @@ variables:
     inputType: FreeText
     description: Batch size for committing data
     defaultValue: 1000
+  - name: TIMESCALE_PASSWORD
+    inputType: Secret
+    description: TimescaleDB password (stored as secret)
+    defaultValue: TIMESCALE_PASSWORD
+    required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
