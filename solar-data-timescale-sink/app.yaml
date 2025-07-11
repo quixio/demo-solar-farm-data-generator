@@ -35,10 +35,6 @@ variables:
     inputType: FreeText
     description: Database schema name
     defaultValue: public
-  - name: SCHEMA_AUTO_UPDATE
-    inputType: FreeText
-    description: Automatically update table schema
-    defaultValue: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
