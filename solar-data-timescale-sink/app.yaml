@@ -6,11 +6,6 @@ variables:
     description: Input topic containing solar panel data
     defaultValue: solar-data
     required: true
-  - name: TIMESCALE_DBNAME
-    inputType: FreeText
-    description: TimescaleDB database name
-    defaultValue: metrics
-    required: true
   - name: TIMESCALE_USER
     inputType: FreeText
     description: TimescaleDB username
