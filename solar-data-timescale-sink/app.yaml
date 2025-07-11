@@ -26,10 +26,6 @@ variables:
     description: TimescaleDB username
     defaultValue: tsadmin
     required: true
-  - name: TIMESCALE_PASSWORD_KEY
-    inputType: Secret
-    description: TimescaleDB password
-    required: true
   - name: TIMESCALE_TABLE
     inputType: FreeText
     description: TimescaleDB table name
@@ -59,6 +55,11 @@ variables:
     inputType: FreeText
     description: Batch size for commits
     defaultValue: 1000
+    required: true
+  - name: TIMESCALE_PASSWORD_KEY
+    inputType: Secret
+    description: TimescaleDB password key
+    defaultValue: TIMESCALE_PASSWORD
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
