@@ -1,2 +1,0 @@
-quixstreams
-psycopg2-binary
