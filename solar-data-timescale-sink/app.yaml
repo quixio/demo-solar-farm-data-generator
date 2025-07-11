@@ -6,11 +6,6 @@ variables:
     description: Input topic containing solar panel data
     defaultValue: solar-data
     required: true
-  - name: TIMESCALE_PORT
-    inputType: FreeText
-    description: TimescaleDB port number
-    defaultValue: 5432
-    required: true
   - name: TIMESCALE_DBNAME
     inputType: FreeText
     description: TimescaleDB database name
