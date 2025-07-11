@@ -3,8 +3,63 @@ language: python
 variables:
   - name: input
     inputType: InputTopic
-    description: Input topic containing solar panel data
+    description: Input topic for solar data
     defaultValue: solar-data
+    required: true
+  - name: TIMESCALE_HOST
+    inputType: FreeText
+    description: TimescaleDB host address
+    defaultValue: timescaledb
+    required: true
+  - name: TIMESCALE_PORT
+    inputType: FreeText
+    description: TimescaleDB port number
+    defaultValue: 5432
+    required: true
+  - name: TIMESCALE_DBNAME
+    inputType: FreeText
+    description: TimescaleDB database name
+    defaultValue: metrics
+    required: true
+  - name: TIMESCALE_USER
+    inputType: FreeText
+    description: TimescaleDB username
+    defaultValue: tsadmin
+    required: true
+  - name: TIMESCALE_TABLE
+    inputType: FreeText
+    description: TimescaleDB table name
+    defaultValue: solar_data
+    required: true
+  - name: TIMESCALE_SCHEMA
+    inputType: FreeText
+    description: TimescaleDB schema name
+    defaultValue: public
+    required: true
+  - name: SCHEMA_AUTO_UPDATE
+    inputType: FreeText
+    description: Enable automatic schema updates
+    defaultValue: true
+    required: true
+  - name: CONSUMER_GROUP_NAME
+    inputType: FreeText
+    description: Kafka consumer group name
+    defaultValue: solar-timescale-sink
+    required: true
+  - name: BATCH_TIMEOUT
+    inputType: FreeText
+    description: Batch commit timeout in seconds
+    defaultValue: 1
+    required: true
+  - name: BATCH_SIZE
+    inputType: FreeText
+    description: Batch size for commits
+    defaultValue: 1000
+    required: true
+  - name: TIMESCALE_PASSWORD_KEY
+    inputType: Secret
+    description: TimescaleDB password key
+    defaultValue: TIMESCALE_PASSWORD
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
