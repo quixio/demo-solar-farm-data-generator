@@ -79,5 +79,5 @@ sdf = sdf.apply(transform_solar_data).filter(lambda x: x is not None)
 sdf.sink(timescale_sink)
 
 if __name__ == "__main__":
-    # Production deployment - no stop conditions for continuous operation
-    app.run(sdf)
+    # Test deployment - with stop conditions for testing
+    app.run(sdf, count=10, timeout=30)
