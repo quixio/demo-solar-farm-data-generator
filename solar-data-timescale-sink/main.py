@@ -38,16 +38,14 @@ sdf = app.dataframe(input_topic)
 def transform_solar_data(row):
     """Transform solar panel data for TimescaleDB storage"""
     try:
-        # DEBUG: Print the full message content to understand structure
-        print(f"DEBUG - Full message content: {row}")
-        print(f"DEBUG - Message keys: {list(row.keys()) if hasattr(row, 'keys') else 'Not a dict'}")
-        
-        # Parse the JSON value from the Kafka message
-        data = json.loads(row['value'])
+        # The data is already parsed as a dict, no need to parse JSON
+        data = row
         
         # Convert timestamp from nanoseconds to datetime
         timestamp_ns = data.get('timestamp', 0)
         timestamp = datetime.fromtimestamp(timestamp_ns / 1_000_000_000)
+        
+        print(f"Processing solar data for panel {data.get('panel_id')} at {timestamp}")
         
         # Return structured data for TimescaleDB
         return {
@@ -72,8 +70,6 @@ def transform_solar_data(row):
         }
     except Exception as e:
         print(f"Error processing solar data: {e}")
-        print(f"DEBUG - Row type: {type(row)}")
-        print(f"DEBUG - Row content: {row}")
         return None
 
 # Apply transformation and filter out None values
