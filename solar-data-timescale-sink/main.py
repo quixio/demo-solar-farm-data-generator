@@ -20,9 +20,9 @@ timescale_sink = PostgreSQLSink(
     schema_auto_update=os.getenv("SCHEMA_AUTO_UPDATE", "true").lower() == "true",
 )
 
-# Initialize the application with a time-based consumer group for testing
+# Initialize the application with a time-based consumer group for production
 app = Application(
-    consumer_group=os.getenv("CONSUMER_GROUP_NAME", f"solar-timescale-sink-{int(time.time())}"),
+    consumer_group=os.getenv("CONSUMER_GROUP_NAME", "solar-timescale-sink"),
     auto_offset_reset="earliest",
     commit_interval=float(os.getenv("BATCH_TIMEOUT", "1")),
     commit_every=int(os.getenv("BATCH_SIZE", "1000"))
@@ -79,5 +79,5 @@ sdf = sdf.apply(transform_solar_data).filter(lambda x: x is not None)
 sdf.sink(timescale_sink)
 
 if __name__ == "__main__":
-    # Use stop conditions for testing - process 10 messages with 30 second timeout
-    app.run(sdf, count=10, timeout=30)
+    # Production deployment - no stop conditions for continuous operation
+    app.run(sdf)
