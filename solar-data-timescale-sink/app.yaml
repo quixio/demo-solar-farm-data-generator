@@ -52,9 +52,9 @@ variables:
     description: Batch size for committing data
     defaultValue: 1000
   - name: TIMESCALE_PASSWORD
-    inputType: Secret
-    description: TimescaleDB password (stored as secret)
-    defaultValue: TIMESCALE_PASSWORD
+    inputType: FreeText
+    description: TimescaleDB password
+    defaultValue: tsadminpass
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
