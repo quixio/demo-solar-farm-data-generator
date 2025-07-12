@@ -28,7 +28,7 @@ variables:
     required: true
   - name: TIMESCALEDB_PASSWORD
     inputType: Secret
-    description: TimescaleDB password (from Quix secret)
+    description: TimescaleDB password (secret key name)
     defaultValue: TIMESCALE_PASSWORD
     required: true
   - name: TIMESCALEDB_TABLE
