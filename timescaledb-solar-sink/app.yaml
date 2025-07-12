@@ -3,58 +3,54 @@ language: python
 variables:
   - name: input
     inputType: InputTopic
-    description: This is the input topic
-    defaultValue: input-data
+    description: Input topic containing solar panel data
+    defaultValue: solar-data
     required: true
-  - name: POSTGRES_HOST
+  - name: TIMESCALE_HOST
     inputType: FreeText
-    description: Host address for the PostgreSQL instance.
-    defaultValue: postgresql
+    description: TimescaleDB server hostname
+    defaultValue: timescaledb
     required: true
-  - name: POSTGRES_PORT
+  - name: TIMESCALE_PORT
     inputType: FreeText
-    description: Port number for the PostgreSQL instance.
-    defaultValue: 80
+    description: TimescaleDB server port
+    defaultValue: 5432
     required: true
-  - name: POSTGRES_DBNAME
+  - name: TIMESCALE_DBNAME
     inputType: FreeText
-    description: Database name in PostgreSQL where data should be stored.
-    defaultValue: quix
+    description: TimescaleDB database name
+    defaultValue: metrics
     required: true
-  - name: POSTGRES_USER
+  - name: TIMESCALE_USER
     inputType: FreeText
-    description: Username for the PostgreSQL database.
-    defaultValue: admin
+    description: TimescaleDB username
+    defaultValue: tsadmin
     required: true
-  - name: POSTGRES_PASSWORD
+  - name: TIMESCALE_PASSWORD
     inputType: Secret
-    description: Password for the PostgreSQL database.
+    description: TimescaleDB password (stored as secret)
     required: true
-  - name: POSTGRES_TABLE
+  - name: TIMESCALE_TABLE
     inputType: FreeText
-    description: The PostgreSQL table where data will be stored. If the table does not exist, it will be created automatically.
+    description: Target table for solar data
+    defaultValue: solar_panel_data
     required: true
-  - name: POSTGRES_SCHEMA
+  - name: TIMESCALE_SCHEMA
     inputType: FreeText
-    description: The schema name. Schemas are a way of organizing tables and not related to the table data, referenced as `<schema_name>.<table_name>`. PostrgeSQL uses 'public' by default under the hood.
+    description: Database schema
     defaultValue: public
   - name: SCHEMA_AUTO_UPDATE
     inputType: FreeText
-    description: Automatically update the schema by adding new columns when new fields are detected.
+    description: Auto-update table schema
     defaultValue: true
-  - name: CONSUMER_GROUP_NAME
-    inputType: FreeText
-    description: The name of the consumer group to use when consuming from Kafka
-    defaultValue: postgres-sink
-    required: true
-  - name: BATCH_SIZE
-    inputType: FreeText
-    description: The number of records that the sink holds before flushing data to PostgreSQL.
-    defaultValue: 1000
   - name: BATCH_TIMEOUT
     inputType: FreeText
-    description: The number of seconds that the sink holds before flushing data to PostgreSQL.
+    description: Batch timeout in seconds
     defaultValue: 1
+  - name: BATCH_SIZE
+    inputType: FreeText
+    description: Batch size for commits
+    defaultValue: 1000
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
