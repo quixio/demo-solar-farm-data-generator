@@ -1,49 +1,69 @@
-# import the Quix Streams modules for interacting with Kafka.
-# For general info, see https://quix.io/docs/quix-streams/introduction.html
+```python
 from quixstreams import Application
-
 import os
+import psycopg2
+import json
 
-# for local dev, load env vars from a .env file
-# from dotenv import load_dotenv
-# load_dotenv()
+class TimescaleDBSink:
+    def __init__(self):
+        self.connection = psycopg2.connect(
+            dbname=os.environ.get('TIMESCALEDB_NAME'),
+            user=os.environ.get('TIMESCALEDB_USER'),
+            password=os.environ.get('TIMESCALEDB_PASSWORD'),
+            host=os.environ.get('TIMESCALEDB_HOST'),
+            port=os.environ.get('TIMESCALEDB_PORT')
+        )
+        self.cursor = self.connection.cursor()
 
+    def insert_data(self, data):
+        insert_query = """
+            INSERT INTO solar_data (topic_id, topic_name, stream_id, value, date_time, partition, offset, panel_id, location_id, location_name, latitude, longitude, timezone, power_output, temperature, irradiance, voltage, current, inverter_status, timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        self.cursor.execute(insert_query, data)
+        self.connection.commit()
+
+def process_message(message, sink):
+    value_json = json.loads(message.value)
+    data = (
+        message.topicId,
+        message.topicName,
+        message.streamId,
+        message.value,
+        message.dateTime,
+        message.partition,
+        message.offset,
+        value_json['panel_id'],
+        value_json['location_id'],
+        value_json['location_name'],
+        value_json['latitude'],
+        value_json['longitude'],
+        value_json['timezone'],
+        value_json['power_output'],
+        value_json['temperature'],
+        value_json['irradiance'],
+        value_json['voltage'],
+        value_json['current'],
+        value_json['inverter_status'],
+        value_json['timestamp']
+    )
+    sink.insert_data(data)
 
 def main():
-    """
-    Transformations generally read from, and produce to, Kafka topics.
-
-    They are conducted with Applications and their accompanying StreamingDataFrames
-    which define what transformations to perform on incoming data.
-
-    Be sure to explicitly produce output to any desired topic(s); it does not happen
-    automatically!
-
-    To learn about what operations are possible, the best place to start is:
-    https://quix.io/docs/quix-streams/processing.html
-    """
-
-    # Setup necessary objects
     app = Application(
-        consumer_group="my_transformation",
-        auto_create_topics=True,
+        consumer_group="timescaledb_sink",
+        auto_create_topics=False,
         auto_offset_reset="earliest"
     )
     input_topic = app.topic(name=os.environ["input"])
-    output_topic = app.topic(name=os.environ["output"])
     sdf = app.dataframe(topic=input_topic)
 
-    # Do StreamingDataFrame operations/transformations here
-    sdf = sdf.apply(lambda row: row).filter(lambda row: True)
-    sdf = sdf.print(metadata=True)
+    sink = TimescaleDBSink()
 
-    # Finish off by writing to the final result to the output topic
-    sdf.to_topic(output_topic)
+    sdf = sdf.apply(lambda row: process_message(row, sink))
 
-    # With our pipeline defined, now run the Application
-    app.run()
+    app.run(count=10)
 
-
-# It is recommended to execute Applications under a conditional main
 if __name__ == "__main__":
     main()
+```
