@@ -23,6 +23,8 @@ variables:
     required: true
   - name: TIMESCALEDB_PASSWORD
     inputType: Secret
+    multiline: false
+    defaultValue: TIMESCALE_PASSWORD
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
