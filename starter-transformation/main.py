@@ -1,49 +1,67 @@
-# import the Quix Streams modules for interacting with Kafka.
-# For general info, see https://quix.io/docs/quix-streams/introduction.html
-from quixstreams import Application
-
 import os
+import json
+from quixstreams import Application, KafkaStreamingClient
+from quixstreams.sinks.base import BatchingSink, SinkBatch, SinkBackpressureError
+from datetime import datetime
+import psycopg2
 
-# for local dev, load env vars from a .env file
-# from dotenv import load_dotenv
-# load_dotenv()
+class TimescaleDBSink(BatchingSink):
+    def __init__(self):
+        super().__init__()
+        self.connection = None
 
+    def setup(self):
+        try:
+            self.connection = psycopg2.connect(
+                dbname=os.environ.get('TIMESCALEDB_NAME'),
+                user=os.environ.get('TIMESCALEDB_USER'),
+                password=os.environ.get('TIMESCALEDB_PASSWORD'),
+                host=os.environ.get('TIMESCALEDB_HOST'),
+                port=os.environ.get('TIMESCALEDB_PORT'),
+            )
+            print("Connected to TimescaleDB")
+        except Exception as e:
+            print(f"Failed to connect to TimescaleDB: {e}")
+
+    def write(self, batch: SinkBatch):
+        cursor = self.connection.cursor()
+        for item in batch:
+            data = json.loads(item.value.decode('utf-8'))
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO solar_data (
+                        panel_id, location_id, location_name, latitude, longitude, 
+                        timezone, power_output, temperature, irradiance, voltage, 
+                        current, inverter_status, timestamp
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        data['panel_id'], data['location_id'], data['location_name'], 
+                        data['latitude'], data['longitude'], data['timezone'], 
+                        data['power_output'], data['temperature'], data['irradiance'], 
+                        data['voltage'], data['current'], data['inverter_status'], 
+                        datetime.utcfromtimestamp(data['timestamp'] / 1e9)
+                    )
+                )
+                self.connection.commit()
+            except Exception as e:
+                print(f"Failed to write to TimescaleDB: {e}")
+                raise SinkBackpressureError(batch.topic, batch.partition, retry_after=30.0)
+        cursor.close()
 
 def main():
-    """
-    Transformations generally read from, and produce to, Kafka topics.
+    app = Application(consumer_group="timescaledb_sink", auto_create_topics=True)
 
-    They are conducted with Applications and their accompanying StreamingDataFrames
-    which define what transformations to perform on incoming data.
+    input_topic = os.environ["INPUT_TOPIC"]
 
-    Be sure to explicitly produce output to any desired topic(s); it does not happen
-    automatically!
+    kafka_client = KafkaStreamingClient(consumer_group="timescaledb_sink")
+    stream = kafka_client.consume(input_topic)
+    sink = TimescaleDBSink()
 
-    To learn about what operations are possible, the best place to start is:
-    https://quix.io/docs/quix-streams/processing.html
-    """
+    stream.sink(sink)
 
-    # Setup necessary objects
-    app = Application(
-        consumer_group="my_transformation",
-        auto_create_topics=True,
-        auto_offset_reset="earliest"
-    )
-    input_topic = app.topic(name=os.environ["input"])
-    output_topic = app.topic(name=os.environ["output"])
-    sdf = app.dataframe(topic=input_topic)
+    app.run(count=10)
 
-    # Do StreamingDataFrame operations/transformations here
-    sdf = sdf.apply(lambda row: row).filter(lambda row: True)
-    sdf = sdf.print(metadata=True)
-
-    # Finish off by writing to the final result to the output topic
-    sdf.to_topic(output_topic)
-
-    # With our pipeline defined, now run the Application
-    app.run()
-
-
-# It is recommended to execute Applications under a conditional main
 if __name__ == "__main__":
     main()
