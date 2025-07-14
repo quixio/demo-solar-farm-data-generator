@@ -1,2 +1,3 @@
 quixstreams
 python-dotenv
+logging
