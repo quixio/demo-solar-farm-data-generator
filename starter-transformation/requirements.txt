@@ -1,2 +1,2 @@
-quixstreams==3.14.1
-python-dotenv
+quix-streams
+psycopg2-binary
