@@ -1,226 +1,154 @@
-import json
 import os
-from datetime import datetime, timezone
-
+import json
 import psycopg2
-import psycopg2.extras
-from dotenv import load_dotenv
+from psycopg2.extras import RealDictCursor
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch
+from dotenv import load_dotenv
 
-# ---------------------------------------------------------------------#
-#  Load environment variables (handy for local testing)                #
-# ---------------------------------------------------------------------#
 load_dotenv()
 
-# ---------------------------------------------------------------------#
-#  TimescaleDB Sink Implementation                                     #
-# ---------------------------------------------------------------------#
 class TimescaleDBSink(BatchingSink):
-    """
-    A simple TimescaleDB sink that writes solar-panel data into a hypertable.
-    """
-
-    def __init__(
-        self,
-        host: str,
-        port: int,
-        dbname: str,
-        user: str,
-        password: str,
-        table_name: str,
-        schema_name: str = "public",
-        on_client_connect_success=None,
-        on_client_connect_failure=None,
-    ):
-        super().__init__(
-            on_client_connect_success=on_client_connect_success,
-            on_client_connect_failure=on_client_connect_failure,
-        )
-        self._conn_params = {
-            "host": host,
-            "port": port,
-            "dbname": dbname,
-            "user": user,
-            "password": password,
-        }
-        self._table = table_name
-        self._schema = schema_name
+    def __init__(self, host, port, dbname, user, password, table_name, schema_name="public"):
+        super().__init__()
+        self.host = host
+        self.port = port
+        self.dbname = dbname
+        self.user = user
+        self.password = password
+        self.table_name = table_name
+        self.schema_name = schema_name
         self._connection = None
+        self._cursor = None
 
-    # -----------------------------------------------------------------#
-    #  Quix Streams required overrides                                  #
-    # -----------------------------------------------------------------#
     def setup(self):
+        self._connection = psycopg2.connect(
+            host=self.host,
+            port=self.port,
+            dbname=self.dbname,
+            user=self.user,
+            password=self.password
+        )
+        self._cursor = self._connection.cursor(cursor_factory=RealDictCursor)
+        self._create_table_if_not_exists()
+
+    def _create_table_if_not_exists(self):
+        create_table_query = f"""
+        CREATE TABLE IF NOT EXISTS {self.schema_name}.{self.table_name} (
+            topic_id TEXT,
+            topic_name TEXT,
+            stream_id TEXT,
+            panel_id TEXT,
+            location_id TEXT,
+            location_name TEXT,
+            latitude DOUBLE PRECISION,
+            longitude DOUBLE PRECISION,
+            timezone INTEGER,
+            power_output INTEGER,
+            unit_power TEXT,
+            temperature DOUBLE PRECISION,
+            unit_temp TEXT,
+            irradiance INTEGER,
+            unit_irradiance TEXT,
+            voltage DOUBLE PRECISION,
+            unit_voltage TEXT,
+            current INTEGER,
+            unit_current TEXT,
+            inverter_status TEXT,
+            timestamp BIGINT,
+            date_time TIMESTAMP WITH TIME ZONE,
+            partition_num INTEGER,
+            offset_num BIGINT
+        );
         """
-        Establish DB connection and ensure table / hypertable exist.
-        NOTE: BatchingSink.start() will trigger the connection callbacks.
-        """
-        self._connection = psycopg2.connect(**self._conn_params)
-        self._connection.autocommit = True
-        self._ensure_table()
+        self._cursor.execute(create_table_query)
+        self._connection.commit()
 
     def write(self, batch: SinkBatch):
-        """
-        Insert a batch of records into TimescaleDB.
-        """
-        rows = []
-        for record in batch:
-            try:
-                payload = json.loads(record.value)
-            except (json.JSONDecodeError, TypeError):
-                # Skip malformed records
-                continue
+        if not batch:
+            return
 
-            ts_ns = payload.get("timestamp")
-            if ts_ns is not None:
-                # Convert nanoseconds epoch to datetime; fall back if bad value
-                try:
-                    ts = datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc)
-                except Exception:  # pragma: no cover
-                    ts = datetime.utcnow().replace(tzinfo=timezone.utc)
-            else:
-                ts = datetime.utcnow().replace(tzinfo=timezone.utc)
-
-            rows.append(
-                (
-                    ts,  # time
-                    payload.get("panel_id"),
-                    payload.get("location_id"),
-                    payload.get("location_name"),
-                    payload.get("latitude"),
-                    payload.get("longitude"),
-                    payload.get("timezone"),
-                    payload.get("power_output"),
-                    payload.get("unit_power"),
-                    payload.get("temperature"),
-                    payload.get("unit_temp"),
-                    payload.get("irradiance"),
-                    payload.get("unit_irradiance"),
-                    payload.get("voltage"),
-                    payload.get("unit_voltage"),
-                    payload.get("current"),
-                    payload.get("unit_current"),
-                    payload.get("inverter_status"),
-                    record.timestamp,  # Kafka record timestamp (ms since epoch)
-                )
-            )
-
-        if not rows:
-            return  # Nothing to write
-
-        insert_sql = f"""
-            INSERT INTO "{self._schema}"."{self._table}" (
-                time,
-                panel_id,
-                location_id,
-                location_name,
-                latitude,
-                longitude,
-                timezone,
-                power_output,
-                unit_power,
-                temperature,
-                unit_temp,
-                irradiance,
-                unit_irradiance,
-                voltage,
-                unit_voltage,
-                current,
-                unit_current,
-                inverter_status,
-                source_timestamp
-            ) VALUES %s
+        insert_query = f"""
+        INSERT INTO {self.schema_name}.{self.table_name} (
+            topic_id, topic_name, stream_id, panel_id, location_id, location_name,
+            latitude, longitude, timezone, power_output, unit_power, temperature,
+            unit_temp, irradiance, unit_irradiance, voltage, unit_voltage, current,
+            unit_current, inverter_status, timestamp, date_time, partition_num, offset_num
+        ) VALUES (
+            %(topic_id)s, %(topic_name)s, %(stream_id)s, %(panel_id)s, %(location_id)s, %(location_name)s,
+            %(latitude)s, %(longitude)s, %(timezone)s, %(power_output)s, %(unit_power)s, %(temperature)s,
+            %(unit_temp)s, %(irradiance)s, %(unit_irradiance)s, %(voltage)s, %(unit_voltage)s, %(current)s,
+            %(unit_current)s, %(inverter_status)s, %(timestamp)s, %(date_time)s, %(partition_num)s, %(offset_num)s
+        )
         """
 
-        with self._connection.cursor() as cur:
-            psycopg2.extras.execute_values(
-                cur,
-                insert_sql,
-                rows,
-                template=None,
-                page_size=1000,
-            )
+        records = []
+        for item in batch:
+            # Parse the JSON value field
+            value_data = json.loads(item.value["value"])
+            
+            record = {
+                "topic_id": item.value["topicId"],
+                "topic_name": item.value["topicName"],
+                "stream_id": item.value["streamId"],
+                "panel_id": value_data["panel_id"],
+                "location_id": value_data["location_id"],
+                "location_name": value_data["location_name"],
+                "latitude": value_data["latitude"],
+                "longitude": value_data["longitude"],
+                "timezone": value_data["timezone"],
+                "power_output": value_data["power_output"],
+                "unit_power": value_data["unit_power"],
+                "temperature": value_data["temperature"],
+                "unit_temp": value_data["unit_temp"],
+                "irradiance": value_data["irradiance"],
+                "unit_irradiance": value_data["unit_irradiance"],
+                "voltage": value_data["voltage"],
+                "unit_voltage": value_data["unit_voltage"],
+                "current": value_data["current"],
+                "unit_current": value_data["unit_current"],
+                "inverter_status": value_data["inverter_status"],
+                "timestamp": value_data["timestamp"],
+                "date_time": item.value["dateTime"],
+                "partition_num": item.value["partition"],
+                "offset_num": item.value["offset"]
+            }
+            records.append(record)
 
-    # -----------------------------------------------------------------#
-    #  Internal helpers                                                 #
-    # -----------------------------------------------------------------#
-    def _ensure_table(self):
-        """
-        Create the table if it doesn't exist and convert it into a hypertable.
-        """
-        create_table_sql = f"""
-            CREATE TABLE IF NOT EXISTS "{self._schema}"."{self._table}" (
-                time              TIMESTAMPTZ       NOT NULL,
-                panel_id          TEXT,
-                location_id       TEXT,
-                location_name     TEXT,
-                latitude          DOUBLE PRECISION,
-                longitude         DOUBLE PRECISION,
-                timezone          INTEGER,
-                power_output      INTEGER,
-                unit_power        TEXT,
-                temperature       DOUBLE PRECISION,
-                unit_temp         TEXT,
-                irradiance        INTEGER,
-                unit_irradiance   TEXT,
-                voltage           DOUBLE PRECISION,
-                unit_voltage      TEXT,
-                current           INTEGER,
-                unit_current      TEXT,
-                inverter_status   TEXT,
-                source_timestamp  BIGINT
-            );
-        """
-        create_hypertable_sql = f"""
-            SELECT create_hypertable(
-                '"{self._schema}"."{self._table}"',
-                'time',
-                if_not_exists => TRUE
-            );
-        """
+        self._cursor.executemany(insert_query, records)
+        self._connection.commit()
 
-        with self._connection.cursor() as cur:
-            cur.execute(create_table_sql)
-            cur.execute(create_hypertable_sql)
+    def close(self):
+        if self._cursor:
+            self._cursor.close()
+        if self._connection:
+            self._connection.close()
 
-
-# ---------------------------------------------------------------------#
-#  Sink instantiation                                                  #
-# ---------------------------------------------------------------------#
-timescaledb_sink = TimescaleDBSink(
-    host=os.environ.get("TIMESCALEDB_HOST", "localhost"),
+# Initialize TimescaleDB Sink
+timescale_sink = TimescaleDBSink(
+    host=os.environ.get("TIMESCALEDB_HOST"),
     port=int(os.environ.get("TIMESCALEDB_PORT", "5432")),
-    dbname=os.environ.get("TIMESCALEDB_DATABASE", "postgres"),
-    user=os.environ.get("TIMESCALEDB_USER", "postgres"),
-    password=os.environ.get("TIMESCALEDB_PASSWORD", ""),
-    table_name=os.environ.get("TIMESCALEDB_TABLE", "solar_panel_data"),
-    schema_name=os.environ.get("TIMESCALEDB_SCHEMA", "public"),
+    dbname=os.environ.get("TIMESCALEDB_DBNAME"),
+    user=os.environ.get("TIMESCALEDB_USER"),
+    password=os.environ.get("TIMESCALEDB_PASSWORD"),
+    table_name=os.environ.get("TIMESCALEDB_TABLE", "solar_data"),
+    schema_name=os.environ.get("TIMESCALEDB_SCHEMA", "public")
 )
 
-# ---------------------------------------------------------------------#
-#  Quix Streams Application setup                                      #
-# ---------------------------------------------------------------------#
+# Initialize the application
 app = Application(
-    consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "solar-timescale-sinkv3"),
+    consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "timescale-sink-group"),
     auto_offset_reset="earliest",
     commit_interval=float(os.environ.get("BATCH_TIMEOUT", "1")),
-    commit_every=int(os.environ.get("BATCH_SIZE", "1000")),
+    commit_every=int(os.environ.get("BATCH_SIZE", "1000"))
 )
 
-input_topic_name = os.environ.get("INPUT_TOPIC", "solar-data")
-input_topic = app.topic(
-    input_topic_name,
-    key_deserializer="string",
-    value_deserializer="string",
-)
+# Define the input topic
+input_topic = app.topic(os.environ.get("input", "solar-data"), key_deserializer="string")
 
+# Process and sink data
 sdf = app.dataframe(input_topic)
-sdf.sink(timescaledb_sink)
+sdf.sink(timescale_sink)
 
-# ---------------------------------------------------------------------#
-#  Entrypoint                                                          #
-# ---------------------------------------------------------------------#
 if __name__ == "__main__":
-    # Stop after 10 messages or 20 seconds, whichever comes first.
     app.run(count=10, timeout=20)
