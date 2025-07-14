@@ -1,2 +1,3 @@
 quix-streams
+python-dotenv
 psycopg2-binary
