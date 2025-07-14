@@ -13,6 +13,8 @@ variables:
     required: true
   - name: TIMESCALEDB_HOST
     inputType: FreeText
+    multiline: false
+    defaultValue: timescaledb
     required: true
   - name: TIMESCALEDB_DATABASE
     inputType: FreeText
