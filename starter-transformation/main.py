@@ -1,49 +1,78 @@
-# import the Quix Streams modules for interacting with Kafka.
-# For general info, see https://quix.io/docs/quix-streams/introduction.html
 from quixstreams import Application
-
 import os
+import json
+import psycopg2
 
-# for local dev, load env vars from a .env file
-# from dotenv import load_dotenv
-# load_dotenv()
+def connect_to_timescaledb():
+    connection_string = f"dbname='{os.environ.get('TIMESCALEDB_NAME')}' user='{os.environ.get('TIMESCALEDB_USER')}' " \
+                        f"host='{os.environ.get('TIMESCALEDB_HOST')}' password='{os.environ.get('TIMESCALEDB_PASSWORD')}'"
+    try:
+        connection = psycopg2.connect(connection_string)
+        return connection
+    except Exception as e:
+        print(f"Unable to connect to the database: {e}")
+        return None
 
+def process_message(message, conn):
+    try:
+        # Parse the JSON value field
+        data = json.loads(message['value'])
+
+        # Extract data
+        panel_id = data['panel_id']
+        location_id = data['location_id']
+        location_name = data['location_name']
+        latitude = data['latitude']
+        longitude = data['longitude']
+        timezone = data['timezone']
+        power_output = data['power_output']
+        temperature = data['temperature']
+        irradiance = data['irradiance']
+        voltage = data['voltage']
+        current = data['current']
+        inverter_status = data['inverter_status']
+        timestamp = data['timestamp']
+
+        # Insert data into TimescaleDB
+        cursor = conn.cursor()
+        insert_query = """
+        INSERT INTO solar_data (panel_id, location_id, location_name, latitude, longitude, timezone, power_output, 
+        temperature, irradiance, voltage, current, inverter_status, timestamp)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+        """
+        cursor.execute(insert_query, (panel_id, location_id, location_name, latitude, longitude, timezone, power_output, 
+                                      temperature, irradiance, voltage, current, inverter_status, timestamp))
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        print(f"Failed to process message: {e}")
 
 def main():
-    """
-    Transformations generally read from, and produce to, Kafka topics.
-
-    They are conducted with Applications and their accompanying StreamingDataFrames
-    which define what transformations to perform on incoming data.
-
-    Be sure to explicitly produce output to any desired topic(s); it does not happen
-    automatically!
-
-    To learn about what operations are possible, the best place to start is:
-    https://quix.io/docs/quix-streams/processing.html
-    """
-
-    # Setup necessary objects
     app = Application(
-        consumer_group="my_transformation",
+        consumer_group="solar_data_processor",
         auto_create_topics=True,
         auto_offset_reset="earliest"
     )
+
     input_topic = app.topic(name=os.environ["input"])
-    output_topic = app.topic(name=os.environ["output"])
+
+    connection = connect_to_timescaledb()
+
+    if connection is None:
+        return
+
     sdf = app.dataframe(topic=input_topic)
+    count = 0
 
-    # Do StreamingDataFrame operations/transformations here
-    sdf = sdf.apply(lambda row: row).filter(lambda row: True)
-    sdf = sdf.print(metadata=True)
+    for message in sdf:
+        if count >= 10:
+            break
+        process_message(message, connection)
+        count += 1
 
-    # Finish off by writing to the final result to the output topic
-    sdf.to_topic(output_topic)
+    connection.close()
 
-    # With our pipeline defined, now run the Application
-    app.run()
+    app.run(count=10)
 
-
-# It is recommended to execute Applications under a conditional main
 if __name__ == "__main__":
     main()
