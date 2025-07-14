@@ -128,10 +128,10 @@ class TimescaleDBSink(BatchingSink):
 timescale_sink = TimescaleDBSink(
     host=os.environ.get("TIMESCALEDB_HOST"),
     port=int(os.environ.get("TIMESCALEDB_PORT", "5432")),
-    dbname=os.environ.get("TIMESCALEDB_DBNAME"),
+    dbname=os.environ.get("TIMESCALEDB_DATABASE"),
     user=os.environ.get("TIMESCALEDB_USER"),
     password=os.environ.get("TIMESCALEDB_PASSWORD"),
-    table_name=os.environ.get("TIMESCALEDB_TABLE", "solar_data"),
+    table_name=os.environ.get("TIMESCALEDB_TABLE", "solar_data_v2"),
     schema_name=os.environ.get("TIMESCALEDB_SCHEMA", "public")
 )
 
