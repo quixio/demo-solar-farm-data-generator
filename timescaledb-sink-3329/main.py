@@ -202,7 +202,7 @@ timescaledb_sink = TimescaleDBSink(
 #  Quix Streams Application setup                                      #
 # ---------------------------------------------------------------------#
 app = Application(
-    consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "solar-timescale-sink"),
+    consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "solar-timescale-sinkv2"),
     auto_offset_reset="earliest",
     commit_interval=float(os.environ.get("BATCH_TIMEOUT", "1")),
     commit_every=int(os.environ.get("BATCH_SIZE", "1000")),
