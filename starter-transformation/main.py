@@ -1,67 +1,41 @@
+```python
 from quixstreams import Application
-import os
-import psycopg2
 import json
+import os
 
-class TimescaleDBSink:
-    def __init__(self):
-        self.connection = psycopg2.connect(
-            dbname=os.environ.get('TIMESCALEDB_NAME'),
-            user=os.environ.get('TIMESCALEDB_USER'),
-            password=os.environ.get('TIMESCALEDB_PASSWORD'),
-            host=os.environ.get('TIMESCALEDB_HOST'),
-            port=os.environ.get('TIMESCALEDB_PORT')
-        )
-        self.cursor = self.connection.cursor()
+def process_message(message):
+    try:
+        # Parse the nested JSON in the 'value' field
+        value_json = json.loads(message['value'])
+        # Extract and process necessary data
+        panel_id = value_json['panel_id']
+        power_output = value_json['power_output']
+        temperature = value_json['temperature']
+        # ... (Other fields can be processed if required)
+        
+        # Example processing logic (can be customized)
+        print(f"Panel ID: {panel_id}, Power Output: {power_output}W, Temperature: {temperature}°C")
 
-    def insert_data(self, data):
-        insert_query = """
-            INSERT INTO solar_data (topic_id, topic_name, stream_id, value, date_time, partition, offset, panel_id, location_id, location_name, latitude, longitude, timezone, power_output, temperature, irradiance, voltage, current, inverter_status, timestamp)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        self.cursor.execute(insert_query, data)
-        self.connection.commit()
-
-def process_message(message, sink):
-    value_json = json.loads(message.value)
-    data = (
-        message.topicId,
-        message.topicName,
-        message.streamId,
-        message.value,
-        message.dateTime,
-        message.partition,
-        message.offset,
-        value_json['panel_id'],
-        value_json['location_id'],
-        value_json['location_name'],
-        value_json['latitude'],
-        value_json['longitude'],
-        value_json['timezone'],
-        value_json['power_output'],
-        value_json['temperature'],
-        value_json['irradiance'],
-        value_json['voltage'],
-        value_json['current'],
-        value_json['inverter_status'],
-        value_json['timestamp']
-    )
-    sink.insert_data(data)
+    except Exception as e:
+        print("Error processing message:", e)
 
 def main():
     app = Application(
-        consumer_group="timescaledb_sink",
+        consumer_group="solar_data_processor",
         auto_create_topics=False,
         auto_offset_reset="earliest"
     )
-    input_topic = app.topic(name=os.environ["input"])
+
+    input_topic = app.topic(name=os.environ.get("INPUT_TOPIC"))
     sdf = app.dataframe(topic=input_topic)
 
-    sink = TimescaleDBSink()
+    # Configure the processing for each message
+    sdf.process(lambda message: process_message(message))
 
-    sdf = sdf.apply(lambda row: process_message(row, sink))
-
+    # Run the application, limiting to 10 messages
     app.run(count=10)
+
 
 if __name__ == "__main__":
     main()
+```
