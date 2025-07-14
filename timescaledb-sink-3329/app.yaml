@@ -18,6 +18,8 @@ variables:
     required: true
   - name: TIMESCALEDB_DATABASE
     inputType: FreeText
+    multiline: false
+    defaultValue: metrics
     required: true
   - name: TIMESCALEDB_PASSWORD
     inputType: Secret
