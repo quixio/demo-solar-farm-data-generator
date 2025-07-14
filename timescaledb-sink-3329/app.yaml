@@ -8,6 +8,8 @@ variables:
     required: true
   - name: TIMESCALEDB_USER
     inputType: FreeText
+    multiline: false
+    defaultValue: tsadmin
     required: true
   - name: TIMESCALEDB_HOST
     inputType: FreeText
