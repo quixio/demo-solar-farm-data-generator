@@ -20,7 +20,7 @@ timescale_sink = PostgreSQLSink(
 
 # Initialize the application
 app = Application(
-    consumer_group=os.environ.get('CONSUMER_GROUP_NAME', 'solar-data-consumer'),
+    consumer_group=os.environ.get('CONSUMER_GROUP_NAME', 'solar-data-consumerv2'),
     auto_offset_reset="earliest",
     commit_interval=float(os.environ.get('BATCH_TIMEOUT', '1')),
     commit_every=int(os.environ.get('BATCH_SIZE', '1000'))
