@@ -1,2 +1,0 @@
-quixstreams[postgresql]
-python-dotenv
