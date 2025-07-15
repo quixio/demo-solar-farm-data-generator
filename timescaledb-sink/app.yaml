@@ -1,26 +1,6 @@
 name: timescaledb-sink-draft
 language: python
 variables:
-  - name: TIMESCALEDB_TABLE
-    inputType: FreeText
-    defaultValue: data_sink
-    required: true
-  - name: TIMESCALEDB_DATABASE
-    inputType: FreeText
-    defaultValue: metrics
-    required: true
-  - name: TIMESCALEDB_PASSWORD
-    inputType: Secret
-    defaultValue: TIMESCALE_PASSWORD
-    required: true
-  - name: TIMESCALEDB_HOST
-    inputType: FreeText
-    defaultValue: timescaledb
-    required: true
-  - name: SCHEMA_AUTO_UPDATE
-    inputType: FreeText
-    defaultValue: public
-    required: true
   - name: TIMESCALEDB_USER
     inputType: FreeText
     defaultValue: tsadmin
@@ -37,6 +17,10 @@ variables:
     inputType: FreeText
     defaultValue: timescaledb-consumer-group
     required: true
+  - name: TIMESCALEDB_HOST
+    inputType: FreeText
+    defaultValue: timescaledb
+    required: true
   - name: BATCH_TIMEOUT
     inputType: FreeText
     defaultValue: 1
@@ -44,6 +28,22 @@ variables:
   - name: BATCH_SIZE
     inputType: FreeText
     defaultValue: 1000
+    required: true
+  - name: SCHEMA_AUTO_UPDATE
+    inputType: FreeText
+    defaultValue: public
+    required: true
+  - name: TIMESCALEDB_PASSWORD
+    inputType: Secret
+    defaultValue: TIMESCALE_PASSWORD
+    required: true
+  - name: TIMESCALEDB_TABLE
+    inputType: FreeText
+    defaultValue: data_sink
+    required: true
+  - name: TIMESCALEDB_DATABASE
+    inputType: FreeText
+    defaultValue: metrics
     required: true
   - name: TIMESCALEDB_SCHEMA
     inputType: FreeText
