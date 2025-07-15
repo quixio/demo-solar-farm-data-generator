@@ -17,21 +17,17 @@ variables:
     inputType: Secret
     defaultValue: TIMESCALE_PASSWORD
     required: true
+  - name: TIMESCALEDB_DATABASE
+    inputType: FreeText
+    defaultValue: metrics
+    required: true
   - name: TIMESCALEDB_HOST
     inputType: FreeText
     defaultValue: timescaledb
     required: true
-  - name: TIMESCALEDB_SCHEMA
-    inputType: FreeText
-    defaultValue: public
-    required: true
   - name: CONSUMER_GROUP_NAME
     inputType: FreeText
     defaultValue: timescaledb-consumer-group
-    required: true
-  - name: TIMESCALEDB_DBNAME
-    inputType: FreeText
-    defaultValue: metrics
     required: true
   - name: BATCH_SIZE
     inputType: FreeText
