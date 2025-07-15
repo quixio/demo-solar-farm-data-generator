@@ -1,2 +1,2 @@
-quixstreams
+quixstreams[postgresql]
 python-dotenv
