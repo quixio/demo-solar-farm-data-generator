@@ -1,13 +1,13 @@
 name: timescaledb-sink-draft-e8la
 language: python
 variables:
-  - name: BATCH_SIZE
-    inputType: FreeText
-    defaultValue: 1000
-    required: true
   - name: CONSUMER_GROUP_NAME
     inputType: FreeText
     defaultValue: timescaledb-consumer-group
+    required: true
+  - name: BATCH_SIZE
+    inputType: FreeText
+    defaultValue: 1000
     required: true
   - name: TIMESCALEDB_HOST
     inputType: FreeText
@@ -29,10 +29,6 @@ variables:
     inputType: FreeText
     defaultValue: metrics
     required: true
-  - name: TIMESCALEDB_PASSWORD
-    inputType: Secret
-    defaultValue: TIMESCALE_PASSWORD
-    required: true
   - name: TIMESCALEDB_TABLE
     inputType: FreeText
     defaultValue: data_sink
@@ -40,6 +36,10 @@ variables:
   - name: TIMESCALEDB_SCHEMA
     inputType: FreeText
     defaultValue: public
+    required: true
+  - name: TIMESCALEDB_PASSWORD
+    inputType: Secret
+    defaultValue: TIMESCALE_PASSWORD
     required: true
   - name: TIMESCALEDB_PORT
     inputType: FreeText
