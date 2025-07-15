@@ -23,7 +23,7 @@ variables:
     required: true
   - name: TIMESCALEDB_TABLE
     inputType: FreeText
-    defaultValue: data_sink_iyog
+    defaultValue: data_sink_pz6f
     required: true
   - name: CONSUMER_GROUP_NAME
     inputType: FreeText
