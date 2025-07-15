@@ -222,6 +222,19 @@ deployments:
     publicAccess:
       enabled: true
       urlPrefix: pgadmin-5e9be1f
+  - name: Starter Sink
+    application: starter-sink
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 200
+      memory: 500
+      replicas: 1
+    variables:
+      - name: input
+        inputType: InputTopic
+        description: Name of the input topic to listen to.
+        value: solar-data
 
 # This section describes the Topics of the data pipeline
 topics:
