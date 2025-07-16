@@ -222,6 +222,55 @@ deployments:
     publicAccess:
       enabled: true
       urlPrefix: pgadmin-5e9be1f
+  - name: TimescaleDB-deployment-a83t
+    application: timescaledb-sink-wdua
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 200
+      memory: 500
+      replicas: 1
+    variables:
+      - name: input
+        inputType: InputTopic
+        required: true
+        value: solar-data
+      - name: TIMESCALEDB_HOST
+        inputType: FreeText
+        required: true
+        value: timescaledb
+      - name: TIMESCALEDB_TABLE
+        inputType: FreeText
+        required: true
+        value: solar_data_v9b
+      - name: CONSUMER_GROUP_NAME
+        inputType: FreeText
+        required: true
+        value: timescaledb-consumer-group
+      - name: BATCH_TIMEOUT
+        inputType: FreeText
+        required: true
+        value: 1
+      - name: TIMESCALEDB_PORT
+        inputType: FreeText
+        required: true
+        value: 5432
+      - name: BATCH_SIZE
+        inputType: FreeText
+        required: true
+        value: 1000
+      - name: TIMESCALEDB_DATABASE
+        inputType: FreeText
+        required: true
+        value: metrics
+      - name: TIMESCALE_PASSWORD_SECRET_KEY
+        inputType: Secret
+        required: true
+        secretKey: TIMESCALE_PASSWORD
+      - name: TIMESCALEDB_USER
+        inputType: FreeText
+        required: true
+        value: tsadmin
 
 # This section describes the Topics of the data pipeline
 topics:
