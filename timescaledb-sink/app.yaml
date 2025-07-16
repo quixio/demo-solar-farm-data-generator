@@ -5,6 +5,10 @@ variables:
     inputType: FreeText
     defaultValue: tsadmin
     required: true
+  - name: TIMESCALEDB_TABLE
+    inputType: FreeText
+    defaultValue: data_sink_tnoa
+    required: true
   - name: TIMESCALEDB_HOST
     inputType: FreeText
     defaultValue: timescaledb
