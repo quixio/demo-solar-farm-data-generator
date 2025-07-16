@@ -1,28 +1,20 @@
 name: timescaledb-sink-draft
 language: python
 variables:
-  - name: KAFKA_BROKER_ADDRESS
-    inputType: FreeText
-    required: true
   - name: TIMESCALEDB_USER
     inputType: FreeText
     defaultValue: tsadmin
-    required: true
-  - name: TIMESCALEDB_TABLE
-    inputType: FreeText
-    defaultValue: data_sink_5ygi
     required: true
   - name: TIMESCALEDB_HOST
     inputType: FreeText
     defaultValue: timescaledb
     required: true
-  - name: KAFKA_INPUT_TOPIC
-    inputType: InputTopic
-    defaultValue: solar-data
-    required: true
   - name: TIMESCALEDB_PORT
     inputType: FreeText
     defaultValue: 5432
+    required: true
+  - name: BROKER_ADDRESS
+    inputType: FreeText
     required: true
   - name: TIMESCALEDB_PASSWORD
     inputType: Secret
