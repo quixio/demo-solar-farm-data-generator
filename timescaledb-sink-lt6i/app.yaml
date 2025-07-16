@@ -21,13 +21,12 @@ variables:
     inputType: FreeText
     defaultValue: timescaledb
     required: true
+  - name: TIMESCALE_PASSWORD
+    inputType: FreeText
+    required: true
   - name: CONSUMER_GROUP_NAME
     inputType: FreeText
     defaultValue: timescaledb-consumer-group
-    required: true
-  - name: TIMESCALE_PASSWORD_SECRET_KEY
-    inputType: Secret
-    defaultValue: TIMESCALE_PASSWORD
     required: true
   - name: TIMESCALEDB_PORT
     inputType: FreeText
