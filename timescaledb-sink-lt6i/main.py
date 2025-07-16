@@ -165,7 +165,7 @@ timescale_sink = TimescaleDBSink(
     database=os.environ.get('TIMESCALEDB_DATABASE', 'metrics'),
     username=os.environ.get('TIMESCALEDB_USER', 'tsadmin'),
     password=os.environ.get('TIMESCALE_PASSWORD'),
-    table_name=os.environ.get('TIMESCALEDB_TABLE', 'solar_data_v3a'),
+    table_name=os.environ.get('TIMESCALEDB_TABLE', 'solar_data_v3b'),
     schema_name=os.environ.get('TIMESCALEDB_SCHEMA', 'public')
 )
 
