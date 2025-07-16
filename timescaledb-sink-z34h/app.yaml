@@ -28,7 +28,7 @@ variables:
   - name: TIMESCALEDB_TABLE
     inputType: FreeText
     multiline: false
-    defaultValue: solarv3a
+    defaultValue: solarv3b
     required: true
   - name: BATCH_TIMEOUT
     inputType: FreeText
