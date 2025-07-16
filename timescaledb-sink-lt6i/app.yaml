@@ -44,7 +44,8 @@ variables:
     required: true
   - name: TIMESCALEDB_TABLE
     inputType: FreeText
-    defaultValue: solar_data_v3
+    multiline: false
+    defaultValue: solar_data_v3a
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
