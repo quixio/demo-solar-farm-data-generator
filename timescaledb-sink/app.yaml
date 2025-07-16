@@ -19,7 +19,8 @@ variables:
     required: true
   - name: TIMESCALEDB_PASSWORD
     inputType: Secret
-    defaultValue: TIMESCALE_DB
+    multiline: false
+    defaultValue: TIMESCALE_PASSWORD
     required: true
   - name: TIMESCALEDB_HOST
     inputType: FreeText
