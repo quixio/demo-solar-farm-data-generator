@@ -22,9 +22,6 @@ variables:
     inputType: FreeText
     defaultValue: timescaledb
     required: true
-  - name: KAFKA_BROKER
-    inputType: FreeText
-    required: true
   - name: TIMESCALEDB_PORT
     inputType: FreeText
     defaultValue: 5432
