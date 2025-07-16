@@ -99,10 +99,7 @@ class TimescaleDBSink(BatchingSink):
 
         try:
             with self._connection.cursor() as cursor:
-                record_count = 0
-
-                for item in batch:
-                    print(f'Raw message: {item}')
+                record_)
                     
                     # item.value may already be a dict if the JSON deserializer is enabled
                     if isinstance(item.value, dict):
@@ -186,4 +183,4 @@ sdf = app.dataframe(input_topic)
 sdf.sink(timescale_sink)
 
 if __name__ == "__main__":
-    app.run(count=10, timeout=20)
+    app.run()
