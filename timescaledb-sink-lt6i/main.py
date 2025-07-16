@@ -99,7 +99,10 @@ class TimescaleDBSink(BatchingSink):
 
         try:
             with self._connection.cursor() as cursor:
-                record_)
+                record_count = 0
+
+                for item in batch:
+                    print(f'Raw message: {item}')
                     
                     # item.value may already be a dict if the JSON deserializer is enabled
                     if isinstance(item.value, dict):
@@ -163,7 +166,7 @@ timescale_sink = TimescaleDBSink(
     database=os.environ.get('TIMESCALEDB_DATABASE', 'metrics'),
     username=os.environ.get('TIMESCALEDB_USER', 'tsadmin'),
     password=os.environ.get('TIMESCALE_PASSWORD'),
-    table_name=os.environ.get('TIMESCALEDB_TABLE', 'solar_data_v3'),
+    table_name=os.environ.get('TIMESCALEDB_TABLE', 'solar_data_v3a'),
     schema_name=os.environ.get('TIMESCALEDB_SCHEMA', 'public')
 )
 
@@ -184,4 +187,4 @@ sdf.sink(timescale_sink)
 
 if __name__ == "__main__":
     timescale_sink.setup()  
-    app.run()
+    app.run(count=10, timeout=20)
