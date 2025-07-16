@@ -222,14 +222,6 @@ deployments:
     publicAccess:
       enabled: true
       urlPrefix: pgadmin-5e9be1f
-  - name: TimescaleDB-deployment-odsz
-    application: timescaledb-sink-u4mr
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
   - name: TimescaleDB-deployment-9gmx
     application: timescaledb-sink-udik
     version: latest
