@@ -1,3 +1,0 @@
-logging
-quixstreams
-psycopg2-binary
