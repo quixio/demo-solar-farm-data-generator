@@ -5,6 +5,7 @@ from psycopg2.extras import RealDictCursor
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch
 
+print(f'I have {os.environ["TIMESCALE_PASSWORD_SECRET_KEY"]}')
 
 def _get_timescale_password() -> str:
     """
@@ -16,7 +17,7 @@ def _get_timescale_password() -> str:
         or os.getenv("TIMESCALEDB_PASSWORD__SECRET")            # Quix secret injection
         or os.getenv("TIMESCALE_PASSWORD_SECRET_KEY")           # legacy name (used in the code before)
     )
-    print(f'I gave {os.environ("TIMESCALE_PASSWORD_SECRET_KEY")}')
+    
     if not pw:
         raise RuntimeError(
             "TimescaleDB password not found – please set "
