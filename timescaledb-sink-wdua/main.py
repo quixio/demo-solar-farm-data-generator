@@ -1,7 +1,7 @@
 import os
 import json
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from datetime import datetime, timezone
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch
 from dotenv import load_dotenv
@@ -9,14 +9,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class TimescaleDBSink(BatchingSink):
-    def __init__(self, host, port, database, user, password, table_name, on_client_connect_success=None, on_client_connect_failure=None):
+    def __init__(self, host, port, dbname, user, password, table_name, on_client_connect_success=None, on_client_connect_failure=None):
         super().__init__(
             on_client_connect_success=on_client_connect_success,
             on_client_connect_failure=on_client_connect_failure
         )
         self.host = host
         self.port = port
-        self.database = database
+        self.dbname = dbname
         self.user = user
         self.password = password
         self.table_name = table_name
@@ -28,11 +28,11 @@ class TimescaleDBSink(BatchingSink):
             self._connection = psycopg2.connect(
                 host=self.host,
                 port=self.port,
-                database=self.database,
+                database=self.dbname,
                 user=self.user,
                 password=self.password
             )
-            self._cursor = self._connection.cursor(cursor_factory=RealDictCursor)
+            self._cursor = self._connection.cursor()
             
             # Create table if it doesn't exist
             create_table_query = f"""
@@ -44,36 +44,40 @@ class TimescaleDBSink(BatchingSink):
                 longitude DOUBLE PRECISION,
                 timezone INTEGER,
                 power_output DOUBLE PRECISION,
-                unit_power VARCHAR(10),
+                unit_power VARCHAR(50),
                 temperature DOUBLE PRECISION,
-                unit_temp VARCHAR(10),
+                unit_temp VARCHAR(50),
                 irradiance DOUBLE PRECISION,
-                unit_irradiance VARCHAR(10),
+                unit_irradiance VARCHAR(50),
                 voltage DOUBLE PRECISION,
-                unit_voltage VARCHAR(10),
+                unit_voltage VARCHAR(50),
                 current DOUBLE PRECISION,
-                unit_current VARCHAR(10),
+                unit_current VARCHAR(50),
                 inverter_status VARCHAR(50),
                 timestamp BIGINT,
-                datetime TIMESTAMP
-            );
+                datetime TIMESTAMPTZ
+            )
             """
-            
             self._cursor.execute(create_table_query)
             self._connection.commit()
             
-            if self._on_client_connect_success:
-                self._on_client_connect_success()
+            # Create hypertable if it doesn't exist (TimescaleDB specific)
+            try:
+                hypertable_query = f"SELECT create_hypertable('{self.table_name}', 'datetime', if_not_exists => TRUE)"
+                self._cursor.execute(hypertable_query)
+                self._connection.commit()
+            except psycopg2.Error as e:
+                # Hypertable might already exist or TimescaleDB extension not available
+                print(f"Note: Could not create hypertable: {e}")
                 
         except Exception as e:
-            if self._on_client_connect_failure:
-                self._on_client_connect_failure(e)
+            print(f"Failed to setup TimescaleDB connection: {e}")
             raise
 
     def write(self, batch: SinkBatch):
         if not self._connection or not self._cursor:
             raise RuntimeError("TimescaleDB connection not established")
-        
+
         insert_query = f"""
         INSERT INTO {self.table_name} (
             panel_id, location_id, location_name, latitude, longitude, timezone,
@@ -85,47 +89,58 @@ class TimescaleDBSink(BatchingSink):
             %(voltage)s, %(unit_voltage)s, %(current)s, %(unit_current)s, %(inverter_status)s, %(timestamp)s, %(datetime)s
         )
         """
-        
+
         batch_data = []
         for item in batch:
             try:
-                # Parse the value field which contains JSON string
-                if hasattr(item, 'value') and isinstance(item.value, str):
+                print(f'Raw message: {item.value}')
+                
+                # Parse the JSON string in the value field
+                if isinstance(item.value, str):
                     solar_data = json.loads(item.value)
+                elif isinstance(item.value, dict) and 'value' in item.value:
+                    solar_data = json.loads(item.value['value'])
                 else:
                     solar_data = item.value
-                
-                # Map the solar data to table columns
+
+                ts_ns = solar_data.get("timestamp")
+                ts_dt = (
+                    datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc)
+                    if ts_ns is not None
+                    else None
+                )
+
                 record = {
-                    'panel_id': solar_data.get('panel_id'),
-                    'location_id': solar_data.get('location_id'),
-                    'location_name': solar_data.get('location_name'),
-                    'latitude': solar_data.get('latitude'),
-                    'longitude': solar_data.get('longitude'),
-                    'timezone': solar_data.get('timezone'),
-                    'power_output': solar_data.get('power_output'),
-                    'unit_power': solar_data.get('unit_power'),
-                    'temperature': solar_data.get('temperature'),
-                    'unit_temp': solar_data.get('unit_temp'),
-                    'irradiance': solar_data.get('irradiance'),
-                    'unit_irradiance': solar_data.get('unit_irradiance'),
-                    'voltage': solar_data.get('voltage'),
-                    'unit_voltage': solar_data.get('unit_voltage'),
-                    'current': solar_data.get('current'),
-                    'unit_current': solar_data.get('unit_current'),
-                    'inverter_status': solar_data.get('inverter_status'),
-                    'timestamp': solar_data.get('timestamp'),
-                    'datetime': item.context.timestamp
+                    "panel_id": solar_data.get("panel_id"),
+                    "location_id": solar_data.get("location_id"),
+                    "location_name": solar_data.get("location_name"),
+                    "latitude": solar_data.get("latitude"),
+                    "longitude": solar_data.get("longitude"),
+                    "timezone": solar_data.get("timezone"),
+                    "power_output": solar_data.get("power_output"),
+                    "unit_power": solar_data.get("unit_power"),
+                    "temperature": solar_data.get("temperature"),
+                    "unit_temp": solar_data.get("unit_temp"),
+                    "irradiance": solar_data.get("irradiance"),
+                    "unit_irradiance": solar_data.get("unit_irradiance"),
+                    "voltage": solar_data.get("voltage"),
+                    "unit_voltage": solar_data.get("unit_voltage"),
+                    "current": solar_data.get("current"),
+                    "unit_current": solar_data.get("unit_current"),
+                    "inverter_status": solar_data.get("inverter_status"),
+                    "timestamp": ts_ns,
+                    "datetime": ts_dt
                 }
                 batch_data.append(record)
-                
+
             except Exception as e:
                 print(f"Error processing item: {e}")
                 continue
-        
+
         if batch_data:
             self._cursor.executemany(insert_query, batch_data)
             self._connection.commit()
+            print(f"Successfully inserted {len(batch_data)} records")
 
     def close(self):
         if self._cursor:
@@ -133,7 +148,7 @@ class TimescaleDBSink(BatchingSink):
         if self._connection:
             self._connection.close()
 
-# Get TimescaleDB connection parameters
+# Initialize TimescaleDB Sink
 try:
     port = int(os.environ.get('TIMESCALEDB_PORT', '5432'))
 except ValueError:
@@ -142,7 +157,7 @@ except ValueError:
 timescale_sink = TimescaleDBSink(
     host=os.environ.get('TIMESCALEDB_HOST', 'timescaledb'),
     port=port,
-    database=os.environ.get('TIMESCALEDB_DATABASE', 'metrics'),
+    dbname=os.environ.get('TIMESCALEDB_DATABASE', 'metrics'),
     user=os.environ.get('TIMESCALEDB_USER', 'tsadmin'),
     password=os.environ.get('TIMESCALE_PASSWORD_SECRET_KEY'),
     table_name=os.environ.get('TIMESCALEDB_TABLE', 'solar_data_v9b')
@@ -161,10 +176,6 @@ input_topic = app.topic(os.environ.get("input", "solar-data"), key_deserializer=
 
 # Process and sink data
 sdf = app.dataframe(input_topic)
-
-# Add debugging print to see raw message structure
-sdf = sdf.apply(lambda message: print(f'Raw message: {message}') or message)
-
 sdf.sink(timescale_sink)
 
 if __name__ == "__main__":
