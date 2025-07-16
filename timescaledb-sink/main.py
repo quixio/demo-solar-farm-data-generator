@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class TimescaleDBSink(BatchingSink):
     """Custom TimescaleDB sink for solar panel data"""
     
-    def __init__(self, connection_string: str, table_name: str = "solar_data"):
+    def __init__(self, connection_string: str, table_name: str = "solar_datav2"):
         super().__init__()
         self.connection_string = connection_string
         self.table_name = table_name
