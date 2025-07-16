@@ -183,4 +183,5 @@ sdf = sdf.apply(lambda message: print(f'Raw message: {message}') or message)
 sdf.sink(timescale_sink)
 
 if __name__ == "__main__":
+    timescale_sink.setup()
     app.run(count=10, timeout=20)
