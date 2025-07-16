@@ -1,60 +1,50 @@
 name: timescaledb-sink-draft
 language: python
 variables:
+  - name: TIMESCALEDB_TABLE
+    inputType: FreeText
+    defaultValue: solar_data_v7
+    required: true
+  - name: TIMESCALEDB_SCHEMA
+    inputType: FreeText
+    defaultValue: public
+    required: true
   - name: input
     inputType: InputTopic
-    description: This is the input topic
-    defaultValue: input-data
+    defaultValue: solar-data
     required: true
-  - name: POSTGRES_HOST
+  - name: TIMESCALEDB_DBNAME
     inputType: FreeText
-    description: Host address for the PostgreSQL instance.
-    defaultValue: postgresql
+    defaultValue: metrics
     required: true
-  - name: POSTGRES_PORT
-    inputType: FreeText
-    description: Port number for the PostgreSQL instance.
-    defaultValue: 80
-    required: true
-  - name: POSTGRES_DBNAME
-    inputType: FreeText
-    description: Database name in PostgreSQL where data should be stored.
-    defaultValue: quix
-    required: true
-  - name: POSTGRES_USER
-    inputType: FreeText
-    description: Username for the PostgreSQL database.
-    defaultValue: admin
-    required: true
-  - name: POSTGRES_PASSWORD
+  - name: TIMESCALEDB_PASSWORD
     inputType: Secret
-    description: Password for the PostgreSQL database.
+    defaultValue: TIMESCALE_DB
     required: true
-  - name: POSTGRES_TABLE
+  - name: TIMESCALEDB_HOST
     inputType: FreeText
-    description: The PostgreSQL table where data will be stored. If the table does not exist, it will be created automatically.
+    defaultValue: timescaledb
     required: true
-  - name: POSTGRES_SCHEMA
+  - name: TIMESCALEDB_PORT
     inputType: FreeText
-    description: The schema name. Schemas are a way of organizing tables and not related to the table data, referenced as `<schema_name>.<table_name>`. PostrgeSQL uses 'public' by default under the hood.
-    defaultValue: public
-  - name: SCHEMA_AUTO_UPDATE
+    defaultValue: 5432
+    required: true
+  - name: TIMESCALEDB_USER
     inputType: FreeText
-    description: Automatically update the schema by adding new columns when new fields are detected.
-    defaultValue: true
-  - name: CONSUMER_GROUP_NAME
-    inputType: FreeText
-    description: The name of the consumer group to use when consuming from Kafka
-    defaultValue: postgres-sink
+    defaultValue: tsadmin
     required: true
   - name: BATCH_SIZE
     inputType: FreeText
-    description: The number of records that the sink holds before flushing data to PostgreSQL.
     defaultValue: 1000
+    required: true
   - name: BATCH_TIMEOUT
     inputType: FreeText
-    description: The number of seconds that the sink holds before flushing data to PostgreSQL.
     defaultValue: 1
+    required: true
+  - name: CONSUMER_GROUP_NAME
+    inputType: FreeText
+    defaultValue: timescaledb-consumer-group
+    required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
