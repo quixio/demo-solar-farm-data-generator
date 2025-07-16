@@ -131,7 +131,7 @@ class TimescaleDBSink(BatchingSink):
                         'unit_current':    data.get('unit_current'),
                         'inverter_status': data.get('inverter_status'),
                         'timestamp':       data.get('timestamp'),
-                        'message_datetime': item.timestamp
+                        'message_datetime': datetime.fromtimestamp(item.timestamp / 1_000_000_000.0)
                     }
 
                     cursor.execute(insert_sql, record)
