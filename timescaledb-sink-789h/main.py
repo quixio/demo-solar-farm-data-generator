@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+password = os.environ.get('TIMESCALE_PASSWORD')
+print(f"DEBUG: Retrieved password: '{password}' (length: {len(password) if password else 0})")
+
 class TimescaleDBSink(BatchingSink):
     def __init__(self, host, port, database, user, password, table_name, on_client_connect_success=None, on_client_connect_failure=None):
         super().__init__(
