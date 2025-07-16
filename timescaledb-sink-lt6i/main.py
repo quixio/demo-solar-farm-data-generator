@@ -5,7 +5,6 @@ from datetime import datetime
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch
 
-# Load environment variables from a .env file for local development
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -56,7 +55,7 @@ class TimescaleDBSink(BatchingSink):
                 inverter_status VARCHAR(50),
                 timestamp BIGINT,
                 message_datetime TIMESTAMPTZ,
-                PRIMARY KEY (panel_id, timestamp)
+                PRIMARY KEY (panel_id, timestamp, message_datetime)
             );
             """
             
@@ -104,7 +103,6 @@ class TimescaleDBSink(BatchingSink):
                 for item in batch:
                     print(f'Raw message: {item}')
                     
-                    # item.value may already be a dict if the JSON deserializer is enabled
                     if isinstance(item.value, dict):
                         data = item.value
                     else:
@@ -153,6 +151,7 @@ class TimescaleDBSink(BatchingSink):
             self._connection.close()
             print("Closed TimescaleDB connection")
 
+
 # Get port with error handling
 try:
     port = int(os.environ.get('TIMESCALEDB_PORT', '5432'))
@@ -186,5 +185,5 @@ sdf = app.dataframe(input_topic)
 sdf.sink(timescale_sink)
 
 if __name__ == "__main__":
-    timescale_sink.setup()  
+    timescale_sink.setup()
     app.run(count=10, timeout=20)
