@@ -2,7 +2,9 @@ name: timescaledb-sink-draft
 language: python
 variables:
   - name: KAFKA_TOPIC
-    inputType: FreeText
+    inputType: InputTopic
+    multiline: false
+    defaultValue: solar-data
     required: true
   - name: TIMESCALEDB_USER
     inputType: FreeText
