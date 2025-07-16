@@ -222,14 +222,6 @@ deployments:
     publicAccess:
       enabled: true
       urlPrefix: pgadmin-5e9be1f
-  - name: TimescaleDB-deployment-rmeg
-    application: timescaledb-sink
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
   - name: TimescaleDB-deployment-k0w6
     application: timescaledb-sink-02e8
     version: latest
