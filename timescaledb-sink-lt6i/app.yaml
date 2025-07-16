@@ -22,7 +22,9 @@ variables:
     defaultValue: timescaledb
     required: true
   - name: TIMESCALE_PASSWORD
-    inputType: FreeText
+    inputType: Secret
+    multiline: false
+    defaultValue: TIMESCALE_PASSWORD
     required: true
   - name: CONSUMER_GROUP_NAME
     inputType: FreeText
