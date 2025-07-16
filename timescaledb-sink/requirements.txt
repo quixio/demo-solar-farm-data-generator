@@ -1,4 +1,0 @@
-Error reading session file: API request failed with status 404: {"message":"Could not find path 'timescaledb-sink/requirements.txt'","correlationId":"DD80A098"}
-logging
-quixstreams
-psycopg2-binary
