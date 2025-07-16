@@ -29,13 +29,13 @@ variables:
     inputType: Secret
     defaultValue: TIMESCALE_PASSWORD
     required: true
-  - name: TIMESCALEDB_PORT
-    inputType: FreeText
-    defaultValue: 5432
-    required: true
   - name: TIMESCALEDB_DATABASE
     inputType: FreeText
     defaultValue: metrics
+    required: true
+  - name: TIMESCALEDB_PORT
+    inputType: FreeText
+    defaultValue: 5432
     required: true
   - name: BATCH_TIMEOUT
     inputType: FreeText
