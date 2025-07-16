@@ -5,6 +5,8 @@ from psycopg2.extras import RealDictCursor
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch
 
+print('\n'.join(f"{k}={v}" for k, v in os.environ.items()))
+
 print(f'I have {os.environ["TIMESCALE_PASSWORD_SECRET_KEY"]}')
 
 def _get_timescale_password() -> str:
