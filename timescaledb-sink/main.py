@@ -1,7 +1,7 @@
-import os
 import json
+import os
 import logging
-from datetime import datetime
+from typing import Dict, Any
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch
 import psycopg2
@@ -13,142 +13,121 @@ logger = logging.getLogger(__name__)
 
 class TimescaleDBSink(BatchingSink):
     """
-    Custom TimescaleDB sink for solar panel data
+    Custom TimescaleDB sink implementation
     """
     
-    def __init__(self, connection_params, table_name="solar_data", on_client_connect_success=None, on_client_connect_failure=None):
-        super().__init__(
-            on_client_connect_success=on_client_connect_success,
-            on_client_connect_failure=on_client_connect_failure
-        )
-        self.connection_params = connection_params
+    def __init__(self, connection_config: Dict[str, Any], table_name: str):
+        super().__init__()
+        self.connection_config = connection_config
         self.table_name = table_name
         self.connection = None
         
     def setup(self):
-        """Initialize the connection to TimescaleDB"""
+        """Setup connection to TimescaleDB"""
         try:
-            self.connection = psycopg2.connect(**self.connection_params)
-            logger.info("Connected to TimescaleDB successfully")
-            
-            # Create table if it doesn't exist
+            self.connection = psycopg2.connect(**self.connection_config)
+            self.connection.autocommit = True
             self._create_table_if_not_exists()
-            
-            if self._on_client_connect_success:
-                self._on_client_connect_success()
-                
+            logger.info("Connected to TimescaleDB successfully")
         except Exception as e:
             logger.error(f"Failed to connect to TimescaleDB: {e}")
-            if self._on_client_connect_failure:
-                self._on_client_connect_failure(e)
             raise
     
     def _create_table_if_not_exists(self):
         """Create the solar_data table if it doesn't exist"""
         create_table_query = f"""
         CREATE TABLE IF NOT EXISTS {self.table_name} (
-            timestamp TIMESTAMPTZ NOT NULL,
-            panel_id VARCHAR(50) NOT NULL,
-            location_id VARCHAR(50) NOT NULL,
-            location_name VARCHAR(100) NOT NULL,
-            latitude DOUBLE PRECISION NOT NULL,
-            longitude DOUBLE PRECISION NOT NULL,
-            timezone INTEGER NOT NULL,
-            power_output DOUBLE PRECISION NOT NULL,
-            unit_power VARCHAR(10) NOT NULL,
-            temperature DOUBLE PRECISION NOT NULL,
-            unit_temp VARCHAR(10) NOT NULL,
-            irradiance DOUBLE PRECISION NOT NULL,
-            unit_irradiance VARCHAR(10) NOT NULL,
-            voltage DOUBLE PRECISION NOT NULL,
-            unit_voltage VARCHAR(10) NOT NULL,
-            current DOUBLE PRECISION NOT NULL,
-            unit_current VARCHAR(10) NOT NULL,
-            inverter_status VARCHAR(20) NOT NULL,
-            message_timestamp BIGINT NOT NULL
+            panel_id VARCHAR(50),
+            location_id VARCHAR(50),
+            location_name VARCHAR(100),
+            latitude DOUBLE PRECISION,
+            longitude DOUBLE PRECISION,
+            timezone INTEGER,
+            power_output DOUBLE PRECISION,
+            unit_power VARCHAR(10),
+            temperature DOUBLE PRECISION,
+            unit_temp VARCHAR(10),
+            irradiance DOUBLE PRECISION,
+            unit_irradiance VARCHAR(10),
+            voltage DOUBLE PRECISION,
+            unit_voltage VARCHAR(10),
+            current DOUBLE PRECISION,
+            unit_current VARCHAR(10),
+            inverter_status VARCHAR(20),
+            timestamp BIGINT,
+            message_datetime TIMESTAMPTZ
         );
-        """
         
-        # Create hypertable if it doesn't exist
-        create_hypertable_query = f"""
-        SELECT create_hypertable('{self.table_name}', 'timestamp', if_not_exists => TRUE);
+        -- Create hypertable if it doesn't exist (TimescaleDB specific)
+        SELECT create_hypertable('{self.table_name}', 'message_datetime', if_not_exists => TRUE);
         """
         
         with self.connection.cursor() as cursor:
             cursor.execute(create_table_query)
-            try:
-                cursor.execute(create_hypertable_query)
-                logger.info(f"Hypertable {self.table_name} created or already exists")
-            except psycopg2.Error as e:
-                logger.warning(f"Could not create hypertable (may already exist): {e}")
-            
-            self.connection.commit()
-            logger.info(f"Table {self.table_name} is ready")
+            logger.info(f"Table {self.table_name} created or already exists")
     
     def write(self, batch: SinkBatch):
-        """Write a batch of data to TimescaleDB"""
+        """Write batch data to TimescaleDB"""
         if not batch:
             return
             
-        insert_query = f"""
-        INSERT INTO {self.table_name} (
-            timestamp, panel_id, location_id, location_name, latitude, longitude, timezone,
-            power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
-            voltage, unit_voltage, current, unit_current, inverter_status, message_timestamp
-        ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-        )
-        """
-        
-        data_to_insert = []
-        for item in batch:
-            # Parse the JSON-encoded value field
-            try:
-                solar_data = json.loads(item.value)
-                
-                # Convert timestamp from nanoseconds to datetime
-                timestamp_ns = solar_data.get('timestamp', 0)
-                timestamp = datetime.fromtimestamp(timestamp_ns / 1_000_000_000)
-                
-                # Map the data to table columns
-                row_data = (
-                    timestamp,
-                    solar_data.get('panel_id', ''),
-                    solar_data.get('location_id', ''),
-                    solar_data.get('location_name', ''),
-                    solar_data.get('latitude', 0.0),
-                    solar_data.get('longitude', 0.0),
-                    solar_data.get('timezone', 0),
-                    solar_data.get('power_output', 0.0),
-                    solar_data.get('unit_power', ''),
-                    solar_data.get('temperature', 0.0),
-                    solar_data.get('unit_temp', ''),
-                    solar_data.get('irradiance', 0.0),
-                    solar_data.get('unit_irradiance', ''),
-                    solar_data.get('voltage', 0.0),
-                    solar_data.get('unit_voltage', ''),
-                    solar_data.get('current', 0.0),
-                    solar_data.get('unit_current', ''),
-                    solar_data.get('inverter_status', ''),
-                    timestamp_ns
-                )
-                
-                data_to_insert.append(row_data)
-                
-            except (json.JSONDecodeError, KeyError) as e:
-                logger.error(f"Error parsing message data: {e}")
-                continue
-        
-        if data_to_insert:
-            try:
-                with self.connection.cursor() as cursor:
-                    cursor.executemany(insert_query, data_to_insert)
-                    self.connection.commit()
-                    logger.info(f"Successfully inserted {len(data_to_insert)} records into TimescaleDB")
-            except psycopg2.Error as e:
-                logger.error(f"Error writing to TimescaleDB: {e}")
-                self.connection.rollback()
-                raise
+        try:
+            with self.connection.cursor() as cursor:
+                for item in batch:
+                    # Parse the JSON value from the message
+                    raw_message = item.value
+                    print(f'Raw message: {raw_message}')
+                    
+                    # Parse the nested JSON in the value field
+                    if isinstance(raw_message, dict) and 'value' in raw_message:
+                        value_json = raw_message['value']
+                        if isinstance(value_json, str):
+                            solar_data = json.loads(value_json)
+                        else:
+                            solar_data = value_json
+                    else:
+                        solar_data = raw_message
+                    
+                    # Map message data to table columns
+                    insert_query = f"""
+                    INSERT INTO {self.table_name} (
+                        panel_id, location_id, location_name, latitude, longitude, timezone,
+                        power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
+                        voltage, unit_voltage, current, unit_current, inverter_status, timestamp,
+                        message_datetime
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    """
+                    
+                    values = (
+                        solar_data.get('panel_id'),
+                        solar_data.get('location_id'),
+                        solar_data.get('location_name'),
+                        solar_data.get('latitude'),
+                        solar_data.get('longitude'),
+                        solar_data.get('timezone'),
+                        solar_data.get('power_output'),
+                        solar_data.get('unit_power'),
+                        solar_data.get('temperature'),
+                        solar_data.get('unit_temp'),
+                        solar_data.get('irradiance'),
+                        solar_data.get('unit_irradiance'),
+                        solar_data.get('voltage'),
+                        solar_data.get('unit_voltage'),
+                        solar_data.get('current'),
+                        solar_data.get('unit_current'),
+                        solar_data.get('inverter_status'),
+                        solar_data.get('timestamp'),
+                        raw_message.get('dateTime') if isinstance(raw_message, dict) else None
+                    )
+                    
+                    cursor.execute(insert_query, values)
+                    logger.info(f"Successfully wrote message to TimescaleDB: {solar_data.get('panel_id')}")
+                    
+        except Exception as e:
+            logger.error(f"Failed to write to TimescaleDB: {e}")
+            raise
     
     def close(self):
         """Close the database connection"""
@@ -157,42 +136,38 @@ class TimescaleDBSink(BatchingSink):
             logger.info("TimescaleDB connection closed")
 
 def main():
-    # Configure the application
-    app = Application(
-        broker_address="localhost:9092",
-        consumer_group="timescaledb-sink-group",
-        commit_every=10,
-        commit_interval=5.0
-    )
-    
-    # Define the input topic
-    input_topic = app.topic("solar-data", value_deserializer="json")
-    
-    # TimescaleDB connection parameters
-    connection_params = {
+    # TimescaleDB connection configuration
+    timescale_config = {
         'host': os.environ.get('TIMESCALEDB_HOST', 'localhost'),
-        'port': os.environ.get('TIMESCALEDB_PORT', '5432'),
+        'port': int(os.environ.get('TIMESCALEDB_PORT', '5432')),
         'database': os.environ.get('TIMESCALEDB_DATABASE', 'solar_data'),
         'user': os.environ.get('TIMESCALEDB_USER'),
         'password': os.environ.get('TIMESCALEDB_PASSWORD')
     }
     
-    # Create the TimescaleDB sink
+    # Create Quix application
+    app = Application(
+        consumer_group="timescaledb-sink-consumer-group",
+        auto_offset_reset="earliest",
+    )
+    
+    # Configure topic
+    topic = app.topic("solar-data", value_deserializer="json")
+    
+    # Create streaming dataframe
+    sdf = app.dataframe(topic)
+    
+    # Create TimescaleDB sink
     timescale_sink = TimescaleDBSink(
-        connection_params=connection_params,
+        connection_config=timescale_config,
         table_name="solar_data"
     )
     
-    # Create streaming dataframe
-    sdf = app.dataframe(input_topic)
-    
-    # Add debug logging to see raw message structure
-    sdf = sdf.apply(lambda message: print(f'Raw message: {message}') or message)
-    
-    # Sink the data to TimescaleDB
+    # Sink data to TimescaleDB
     sdf.sink(timescale_sink)
     
-    # Run the application for 10 messages
+    # Run the application with limit
+    logger.info("Starting TimescaleDB sink application...")
     app.run(count=10, timeout=20)
 
 if __name__ == "__main__":
