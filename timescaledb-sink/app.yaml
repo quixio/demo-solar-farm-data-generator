@@ -1,13 +1,13 @@
 name: timescaledb-sink-draft
 language: python
 variables:
-  - name: TIMESCALEDB_DATABASE
-    inputType: FreeText
-    defaultValue: metrics
-    required: true
   - name: TIMESCALEDB_PORT
     inputType: FreeText
     defaultValue: 5432
+    required: true
+  - name: TIMESCALEDB_DATABASE
+    inputType: FreeText
+    defaultValue: metrics
     required: true
   - name: TIMESCALE_PASSWORD_SECRET_KEY
     inputType: Secret
