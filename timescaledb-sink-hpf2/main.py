@@ -80,9 +80,9 @@ class TimescaleDBSink(BatchingSink):
         try:
             for item in batch:
 
-                # ------------------------------------------------------ #
-                # NEW: accept either raw JSON bytes/str or pre-parsed dict
-                # ------------------------------------------------------ #
+                # ------------------------------ #
+                # Accept bytes/str or dict value
+                # ------------------------------ #
                 if isinstance(item.value, (bytes, str)):
                     data = json.loads(item.value)
                 else:
@@ -91,8 +91,14 @@ class TimescaleDBSink(BatchingSink):
                 # Convert nanotime to Python datetime
                 timestamp_dt = datetime.fromtimestamp(data["timestamp"] / 1_000_000_000)
 
-                # Optional header dateTime parsing (ISO-8601)
-                header_dt = item.headers.get("dateTime")
+                # --------------------------------------------------------- #
+                # NEW: header may be None, or the key may be absent
+                # --------------------------------------------------------- #
+                header_dt = (
+                    item.headers.get("dateTime")                    # when headers is a dict
+                    if item.headers and hasattr(item.headers, "get")
+                    else None
+                )
                 datetime_dt = (
                     datetime.fromisoformat(header_dt.replace("Z", "+00:00"))
                     if header_dt
