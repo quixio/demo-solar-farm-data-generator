@@ -1,2 +1,4 @@
-quixstreams[postgresql]==3.14.1
+Error reading session file: An unexpected error occurred: ConnectTimeout('')
 python-dotenv
+psycopg2-binary
+quixstreams
