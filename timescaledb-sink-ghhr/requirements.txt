@@ -1,2 +1,3 @@
-quixstreams[postgresql]==3.14.1
-python-dotenv
+Error reading session file: API request failed with status 404: {"message":"Could not find path 'timescaledb-sink-ghhr/requirements.txt'","correlationId":"27FF2C70"}
+psycopg2-binary
+quixstreams
