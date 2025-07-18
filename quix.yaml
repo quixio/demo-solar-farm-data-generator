@@ -320,6 +320,39 @@ deployments:
         inputType: FreeText
         required: true
         value: timescaledb-consumer-group
+  - name: TimescaleDB-deployment-ef6p
+    application: timescaledb-sink-4mdg
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 200
+      memory: 500
+      replicas: 1
+    variables:
+      - name: TIMESCALEDB_DBNAME
+        inputType: FreeText
+        required: true
+        value: metrics
+      - name: TIMESCALEDB_HOST
+        inputType: FreeText
+        required: true
+        value: timescaledb
+      - name: TIMESCALEDB_TABLENAME
+        inputType: FreeText
+        required: true
+        value: timescaledb_sink
+      - name: TIMESCALEDB_USERNAME
+        inputType: FreeText
+        required: true
+        value: tsadmin
+      - name: TIMESCALEDB_PORT
+        inputType: FreeText
+        required: true
+        value: 5432
+      - name: TIMESCALEDB_PASSWORD
+        inputType: Secret
+        required: true
+        secretKey: TIMESCALE_PASSWORD
 
 # This section describes the Topics of the data pipeline
 topics:
