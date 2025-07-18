@@ -266,6 +266,11 @@ deployments:
       cpu: 200
       memory: 500
       replicas: 1
+    network:
+      serviceName: timescaledb
+      ports:
+        - port: 5432
+          targetPort: 5432
 
 # This section describes the Topics of the data pipeline
 topics:
