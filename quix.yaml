@@ -198,19 +198,6 @@ deployments:
       - name: API_BASE_URL
         inputType: FreeText
         value: https://gateway-demo-webinarsolarfarm-btestv2.demo.quix.io
-  - name: Timescale DB
-    application: timescale-db
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
-    network:
-      serviceName: timescaledb
-      ports:
-        - port: 5432
-          targetPort: 5432
   - name: pgAdmin
     application: pgadmin
     version: latest
