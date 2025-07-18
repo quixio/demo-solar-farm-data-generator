@@ -151,4 +151,4 @@ sdf = sdf.apply(debug_message)
 sdf.sink(timescale_sink)
 
 if __name__ == "__main__":
-    app.run(count=10, timeout=20)
+    app.run()
