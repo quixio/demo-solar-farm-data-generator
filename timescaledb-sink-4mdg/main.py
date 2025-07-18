@@ -1,38 +1,32 @@
 import os
 import json
 import psycopg2
-from datetime import datetime
+from datetime import datetime, timezone
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch
-from dotenv import load_dotenv
-
-load_dotenv()
 
 class TimescaleDBSink(BatchingSink):
-    def __init__(self, host, port, dbname, user, password, table_name, on_client_connect_success=None, on_client_connect_failure=None):
-        super().__init__(
-            on_client_connect_success=on_client_connect_success,
-            on_client_connect_failure=on_client_connect_failure
-        )
+    def __init__(self, host, port, dbname, user, password, table_name):
+        super().__init__()
         self.host = host
         self.port = port
         self.dbname = dbname
         self.user = user
         self.password = password
         self.table_name = table_name
-        self._connection = None
-        self._cursor = None
+        self.connection = None
+        self.cursor = None
 
     def setup(self):
         try:
-            self._connection = psycopg2.connect(
+            self.connection = psycopg2.connect(
                 host=self.host,
                 port=self.port,
-                dbname=self.dbname,
+                database=self.dbname,
                 user=self.user,
                 password=self.password
             )
-            self._cursor = self._connection.cursor()
+            self.cursor = self.connection.cursor()
             
             # Create table if it doesn't exist
             create_table_query = f"""
@@ -55,64 +49,52 @@ class TimescaleDBSink(BatchingSink):
                 current INTEGER,
                 unit_current TEXT,
                 inverter_status TEXT,
-                message_datetime TIMESTAMPTZ
+                message_timestamp TIMESTAMPTZ
             );
             """
-            self._cursor.execute(create_table_query)
+            self.cursor.execute(create_table_query)
+            self.connection.commit()
             
-            # Convert to hypertable if not already
+            # Create hypertable if it doesn't exist (TimescaleDB specific)
             try:
-                self._cursor.execute(f"SELECT create_hypertable('{self.table_name}', 'timestamp', if_not_exists => TRUE);")
-            except psycopg2.Error:
-                # Table might already be a hypertable
-                pass
-            
-            self._connection.commit()
-            
-            if self._on_client_connect_success:
-                self._on_client_connect_success()
+                hypertable_query = f"SELECT create_hypertable('{self.table_name}', 'timestamp', if_not_exists => TRUE);"
+                self.cursor.execute(hypertable_query)
+                self.connection.commit()
+            except Exception as e:
+                print(f"Hypertable creation failed (might already exist): {e}")
                 
         except Exception as e:
-            if self._on_client_connect_failure:
-                self._on_client_connect_failure(e)
+            print(f"Error setting up TimescaleDB connection: {e}")
             raise
 
     def write(self, batch: SinkBatch):
-        if not self._connection or not self._cursor:
-            self.setup()
-        
-        insert_query = f"""
-        INSERT INTO {self.table_name} (
-            timestamp, panel_id, location_id, location_name, latitude, longitude, timezone,
-            power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
-            voltage, unit_voltage, current, unit_current, inverter_status, message_datetime
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
+        if not self.connection or not self.cursor:
+            raise RuntimeError("Database connection not established")
         
         rows = []
         for item in batch:
             print(f'Raw message: {item}')
             
-            # Parse the JSON value field
+            # Parse JSON in item.value
             try:
-                if isinstance(item.value, str):
-                    data = json.loads(item.value)
-                else:
-                    data = item.value
+                data = json.loads(item.value) if isinstance(item.value, str) else item.value
             except (json.JSONDecodeError, TypeError) as e:
                 print(f"Error parsing JSON: {e}")
                 continue
             
-            # Convert epoch nanoseconds to datetime
+            # Convert sensor timestamp (inside payload) to datetime
             timestamp_ns = data.get('timestamp')
-            if timestamp_ns:
-                # Convert nanoseconds to seconds
-                timestamp_dt = datetime.fromtimestamp(timestamp_ns / 1_000_000_000)
-            else:
-                timestamp_dt = datetime.now()
+            timestamp_dt = (
+                datetime.fromtimestamp(timestamp_ns / 1_000_000_000, tz=timezone.utc)
+                if timestamp_ns else datetime.now(tz=timezone.utc)
+            )
             
-            # Parse message datetime
-            message_datetime = datetime.fromisoformat(item.timestamp.replace('Z', '+00:00'))
+            # Convert Kafka / Quix message timestamp
+            tsi = item.timestamp
+            if isinstance(tsi, str):
+                message_datetime = datetime.fromisoformat(tsi.replace('Z', '+00:00'))
+            else:
+                message_datetime = datetime.fromtimestamp(tsi / 1_000_000_000, tz=timezone.utc)
             
             row = (
                 timestamp_dt,
@@ -138,40 +120,50 @@ class TimescaleDBSink(BatchingSink):
             rows.append(row)
         
         if rows:
-            self._cursor.executemany(insert_query, rows)
-            self._connection.commit()
+            insert_query = f"""
+            INSERT INTO {self.table_name} (
+                timestamp, panel_id, location_id, location_name, latitude, longitude,
+                timezone, power_output, unit_power, temperature, unit_temp, irradiance,
+                unit_irradiance, voltage, unit_voltage, current, unit_current,
+                inverter_status, message_timestamp
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            self.cursor.executemany(insert_query, rows)
+            self.connection.commit()
+            print(f"Inserted {len(rows)} rows into {self.table_name}")
 
     def close(self):
-        if self._cursor:
-            self._cursor.close()
-        if self._connection:
-            self._connection.close()
+        if self.cursor:
+            self.cursor.close()
+        if self.connection:
+            self.connection.close()
 
-# Initialize TimescaleDB Sink
+# Initialize the application
+app = Application(
+    consumer_group="timescaledb-sink-consumer",
+    auto_offset_reset="earliest",
+    commit_interval=1.0,
+    commit_every=1000
+)
+
+# Get environment variables with safe port handling
 try:
     port = int(os.environ.get('TIMESCALEDB_PORT', '5432'))
 except ValueError:
     port = 5432
 
+# Initialize TimescaleDB Sink
 timescale_sink = TimescaleDBSink(
     host=os.environ.get('TIMESCALEDB_HOST', 'timescaledb'),
     port=port,
     dbname=os.environ.get('TIMESCALEDB_DBNAME', 'metrics'),
     user=os.environ.get('TIMESCALEDB_USERNAME', 'tsadmin'),
-    password=os.environ.get('TIMESCALEDB_PASSWORD'),
+    password=os.environ.get('TIMESCALEDB_PASSWORD', 'password'),
     table_name=os.environ.get('TIMESCALEDB_TABLENAME', 'solar_datav6')
 )
 
-# Initialize the application
-app = Application(
-    consumer_group="timescale-sink-consumer",
-    auto_offset_reset="earliest",
-    commit_interval=1.0,
-    commit_every=100
-)
-
 # Define the input topic
-input_topic = app.topic("solar-data", value_deserializer="string")
+input_topic = app.topic("input", value_deserializer="string")
 
 # Process and sink data
 sdf = app.dataframe(input_topic)
