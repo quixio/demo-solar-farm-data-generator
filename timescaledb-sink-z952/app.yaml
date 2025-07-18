@@ -17,6 +17,10 @@ variables:
     inputType: FreeText
     defaultValue: tsadmin
     required: true
+  - name: TIMESCALEDB_TABLE_NAME
+    inputType: FreeText
+    defaultValue: timescaledb_sink
+    required: true
   - name: TIMESCALEDB_PORT
     inputType: FreeText
     defaultValue: 5432
