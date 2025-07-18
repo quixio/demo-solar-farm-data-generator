@@ -1,34 +1,23 @@
 import os
 import json
 import psycopg2
-from psycopg2 import sql
 from datetime import datetime
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch
 
 
 class TimescaleDBSink(BatchingSink):
-    def __init__(self,
-                 host: str,
-                 port: int,
-                 dbname: str,
-                 user: str,
-                 password: str,
-                 table_name: str,
-                 json_column: str = "payload",
-                 on_client_connect_success=None,
-                 on_client_connect_failure=None):
-        # Ensure we always have a non-empty column name
-        json_column = (json_column or "payload").strip()
-        
-        super().__init__(on_client_connect_success, on_client_connect_failure)
+    def __init__(self, host, port, dbname, user, password, table_name, on_client_connect_success=None, on_client_connect_failure=None):
+        super().__init__(
+            on_client_connect_success=on_client_connect_success,
+            on_client_connect_failure=on_client_connect_failure
+        )
         self.host = host
         self.port = port
         self.dbname = dbname
         self.user = user
         self.password = password
         self.table_name = table_name
-        self.json_column = json_column
         self._connection = None
         self._cursor = None
 
@@ -44,124 +33,122 @@ class TimescaleDBSink(BatchingSink):
             )
             self._cursor = self._connection.cursor()
             print(f"Connected to TimescaleDB at {self.host}:{self.port}")
-            
+
             # Create table if it doesn't exist
             self._create_table_if_not_exists()
-            
-            if self.on_client_connect_success:
-                self.on_client_connect_success()
+
+            # Notify Quix Streams that the client connected successfully
+            if self._on_client_connect_success:
+                self._on_client_connect_success()
         except Exception as e:
             print(f"Failed to connect to TimescaleDB: {e}")
-            if self.on_client_connect_failure:
-                self.on_client_connect_failure()
+
+            # Notify Quix Streams that the client failed to connect
+            if self._on_client_connect_failure:
+                self._on_client_connect_failure(e)
             raise
 
     def _create_table_if_not_exists(self):
         """Create the table if it doesn't exist."""
-        create_table_query = sql.SQL("""
-            CREATE TABLE IF NOT EXISTS {table} (
-                timestamp TIMESTAMPTZ NOT NULL,
-                {json_col} JSONB
-            );
-        """).format(
-            table=sql.Identifier(self.table_name),
-            json_col=sql.Identifier(self.json_column)
-        )
+        create_table_sql = f"""
+        CREATE TABLE IF NOT EXISTS {self.table_name} (
+            timestamp TIMESTAMPTZ NOT NULL,
+            data JSONB NOT NULL
+        );
+        """
         
-        self._cursor.execute(create_table_query)
+        self._cursor.execute(create_table_sql)
         self._connection.commit()
         print(f"Table {self.table_name} created or already exists")
 
+        # Create hypertable if it doesn't exist (TimescaleDB specific)
+        try:
+            hypertable_sql = f"SELECT create_hypertable('{self.table_name}', 'timestamp', if_not_exists => TRUE);"
+            self._cursor.execute(hypertable_sql)
+            self._connection.commit()
+            print(f"Hypertable created for {self.table_name}")
+        except Exception as e:
+            print(f"Note: Could not create hypertable (may already exist): {e}")
+            self._connection.rollback()
+
     def write(self, batch: SinkBatch):
-        """Write a batch of records to TimescaleDB."""
+        """Write a batch of data to TimescaleDB."""
         if not batch:
             return
 
-        insert_query = sql.SQL("""
-            INSERT INTO {table} (timestamp, {json_col})
-            VALUES (%s, %s);
-        """).format(
-            table=sql.Identifier(self.table_name),
-            json_col=sql.Identifier(self.json_column)
-        )
-
-        records = []
+        insert_sql = f"INSERT INTO {self.table_name} (timestamp, data) VALUES %s"
+        values = []
+        
         for item in batch:
-            # Convert timestamp from milliseconds to datetime
-            ts = datetime.fromtimestamp(item.timestamp / 1000.0)
-            
-            # Handle message value - check if it's already parsed or needs parsing
-            if isinstance(item.value, (str, bytes)):
-                try:
-                    value_data = json.loads(item.value)
-                except (json.JSONDecodeError, TypeError):
-                    value_data = item.value
+            # Convert timestamp to datetime if it's an epoch timestamp
+            if hasattr(item, 'timestamp') and item.timestamp is not None:
+                timestamp = datetime.fromtimestamp(item.timestamp / 1000.0)
             else:
-                value_data = item.value
+                timestamp = datetime.now()
             
-            records.append((ts, json.dumps(value_data)))
+            # Handle the message value - treat as already parsed dictionary
+            if hasattr(item, 'value') and item.value is not None:
+                data_dict = item.value
+            else:
+                # If no value field, use the entire item as data
+                data_dict = {"message": str(item)}
+            
+            values.append((timestamp, json.dumps(data_dict)))
 
-        self._cursor.executemany(insert_query, records)
+        # Use psycopg2's execute_values for efficient batch insert
+        from psycopg2.extras import execute_values
+        execute_values(self._cursor, insert_sql, values)
         self._connection.commit()
-        print(f"Successfully inserted {len(records)} records into {self.table_name}")
+        print(f"Inserted {len(values)} records into {self.table_name}")
 
     def close(self):
-        """Close database connection."""
+        """Close the database connection."""
         if self._cursor:
             self._cursor.close()
         if self._connection:
             self._connection.close()
-        print("Closed TimescaleDB connection")
+        print("TimescaleDB connection closed")
 
 
 # Initialize the application
 app = Application(
-    consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "timescaledb-sink"),
+    consumer_group="timescaledb-sink-consumer",
     auto_offset_reset="earliest",
-    commit_interval=float(os.environ.get("BATCH_TIMEOUT", "1")),
-    commit_every=int(os.environ.get("BATCH_SIZE", "1000"))
+    commit_interval=1.0,
+    commit_every=1000
 )
 
-# Define the input topic
-input_topic = app.topic(os.environ.get("input", "input"), value_deserializer="json")
-
-# Get environment variables for TimescaleDB connection
-host = os.environ.get('TIMESCALEDB_HOST', 'timescaledb')
-username = os.environ.get('TIMESCALEDB_USERNAME', 'tsadmin')
-password = os.environ.get('TIMESCALEDB_PASSWORD', 'TIMESCALE_PASSWORD')
-dbname = os.environ.get('TIMESCALEDB_DBNAME', 'metrics')
-
-# Handle port with error handling
+# Get environment variables with safe port handling
 try:
     port = int(os.environ.get('TIMESCALEDB_PORT', '5432'))
 except ValueError:
     port = 5432
 
-# Get table name - check both possible environment variables
-table_name = os.environ.get('TIMESCALEDB_TABLENAME') or os.environ.get('TIMESCALEDB_TABLE_NAME', 'timescaledb_sink')
-
-# Get JSON column name with fallback
-json_column = os.environ.get("TIMESCALEDB_JSONCOLUMN") or "payload"
-
 # Initialize TimescaleDB Sink
 timescale_sink = TimescaleDBSink(
-    host=host,
+    host=os.environ.get('TIMESCALEDB_HOST', 'timescaledb'),
     port=port,
-    dbname=dbname,
-    user=username,
-    password=password,
-    table_name=table_name,
-    json_column=json_column
+    dbname=os.environ.get('TIMESCALEDB_DBNAME', 'metrics'),
+    user=os.environ.get('TIMESCALEDB_USERNAME', 'tsadmin'),
+    password=os.environ.get('TIMESCALEDB_PASSWORD', 'password'),
+    table_name=os.environ.get('TIMESCALEDB_TABLENAME', 'solar_datav7')
 )
+
+# Define the input topic
+input_topic = app.topic("input", value_deserializer="json")
 
 # Process and sink data
 sdf = app.dataframe(input_topic)
 
-# Add debug print to see raw message structure
-sdf = sdf.apply(lambda value: print(f'Raw message: {value}') or value)
+# Add debug print for raw messages
+def debug_message(item):
+    print(f"Raw message: {item}")
+    return item
 
+sdf = sdf.apply(debug_message)
+
+# Sink data to TimescaleDB
 sdf.sink(timescale_sink)
 
 if __name__ == "__main__":
-    # Run for exactly 10 messages then stop
     app.run(count=10, timeout=20)
