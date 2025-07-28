@@ -1,10 +1,4 @@
 name: QuestDB
 language: docker
-variables:
-  - name: POSTGRES_DB
-    inputType: FreeText
-    description: The default database name to initialize PostgreSQL with
-    defaultValue: quix
-    required: true
 dockerfile: dockerfile
 defaultFile: dockerfile
