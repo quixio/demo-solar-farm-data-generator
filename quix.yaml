@@ -238,6 +238,8 @@ deployments:
       ports:
         - port: 80
           targetPort: 9000
+        - port: 8812
+          targetPort: 8812
   - name: timescale-db-mc
     application: timescaledb-sink
     version: latest
