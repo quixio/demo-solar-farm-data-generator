@@ -27,6 +27,8 @@ variables:
     required: true
   - name: QDB_PORT
     inputType: FreeText
+    multiline: false
+    defaultValue: 8812
     required: true
   - name: QDB_TOKEN_KEY
     inputType: Secret
