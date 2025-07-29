@@ -22,7 +22,7 @@ class QuestDBSink(BatchingSink):
             port = int(os.environ.get('QUESTDB_PORT', '8812'))
         except ValueError:
             port = 8812
-            
+        print("Trying to connect to Questdb...")    
         self._connection = psycopg2.connect(
             host=self._host,
             port=port,
@@ -35,6 +35,7 @@ class QuestDBSink(BatchingSink):
         
     def _create_table_if_not_exists(self):
         """Create table with appropriate schema"""
+        print("Creating table...")  
         create_table_sql = f"""
         CREATE TABLE IF NOT EXISTS {self._table_name} (
             panel_id STRING,
@@ -64,6 +65,7 @@ class QuestDBSink(BatchingSink):
         
     def write(self, batch: SinkBatch):
         """Write batch of messages to QuestDB"""
+        print("Creating table...")  
         if not batch:
             return
             
@@ -77,6 +79,7 @@ class QuestDBSink(BatchingSink):
         
         records = []
         for item in batch:
+            print("Processing batch item...")  
             # Parse the JSON string from the value field
             if isinstance(item.value, str):
                 data = json.loads(item.value)
@@ -127,12 +130,13 @@ sdf = app.dataframe(input_topic)
 sdf.print(metadata=True)
 
 # Create QuestDB sink
+print("Creating sink...")  
 questdb_sink = QuestDBSink(
     host=os.environ.get('QUESTDB_HOST'),
     table_name=os.environ.get('QUESTDB_TABLE_NAME', 'solar_data'),
     timestamp_column=os.environ.get('TIMESTAMP_COLUMN')
 )
-
+print("Running sink...")  
 sdf.sink(questdb_sink)
 
 if __name__ == "__main__":
