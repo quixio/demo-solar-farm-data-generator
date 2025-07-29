@@ -16,7 +16,7 @@ logger = logging.getLogger("questdb_ingest")              # module-level logger
 # ------------------------------------------------------------------------------
 def ingest_dummy():
     logger.info("Building QuestDB Sender object")
-    conf = "http::addr=questdb:9000;"                   # local QuestDB ILP/HTTP
+    conf = "http::addr=questdb:80;"                   # local QuestDB ILP/HTTP
 
     try:
         with Sender.from_conf(conf) as sender:            # managed connection
