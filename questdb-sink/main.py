@@ -124,7 +124,7 @@ input_topic = app.topic(os.environ.get("INPUT_TOPIC"))
 sdf = app.dataframe(input_topic)
 
 # Debug: Print raw message structure
-sdf = sdf.apply(lambda message: print(f'Raw message: {message}') or message)
+sdf.print(metadata=True)
 
 # Create QuestDB sink
 questdb_sink = QuestDBSink(
