@@ -116,7 +116,7 @@ class QuestDBSink(BatchingSink):
 app = Application(
     consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "questdb-solar-data-writer"),
     auto_offset_reset="earliest",
-    commit_every=int(os.environ.get("BUFFER_SIZE", "1000")),
+    commit_every=int(os.environ.get("BUFFER_SIZE", "10")),
     commit_interval=float(os.environ.get("BUFFER_TIMEOUT", "1.0")),
 )
 
