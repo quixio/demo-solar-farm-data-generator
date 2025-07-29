@@ -13,7 +13,7 @@ variables:
   - name: QUESTDB_PORT
     inputType: FreeText
     multiline: false
-    defaultValue: 80
+    defaultValue: 9000
     required: true
   - name: QUESTDB_TABLE_NAME
     inputType: FreeText
