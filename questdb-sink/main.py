@@ -1,123 +1,14 @@
 import os
 import json
-import psycopg2
 from datetime import datetime
 from quixstreams import Application
-from quixstreams.sinks.base import BatchingSink, SinkBatch
 from dotenv import load_dotenv
 
 load_dotenv()
 
-class QuestDBSink(BatchingSink):
-    def __init__(self, host, table_name, timestamp_column=None, **kwargs):
-        super().__init__(**kwargs)
-        self._host = host
-        self._table_name = table_name
-        self._timestamp_column = timestamp_column
-        self._connection = None
-        
-    def setup(self):
-        """Initialize connection to QuestDB"""
-        try:
-            port = int(os.environ.get('QUESTDB_PORT', '8812'))
-        except ValueError:
-            port = 8812
-        print("Trying to connect to Questdb...")    
-        self._connection = psycopg2.connect(
-            host=self._host,
-            port=port,
-            database='qdb'
-        )
-        self._connection.autocommit = True
-        
-        # Create table if it doesn't exist
-        self._create_table_if_not_exists()
-        
-    def _create_table_if_not_exists(self):
-        """Create table with appropriate schema"""
-        print("Creating table...")  
-        create_table_sql = f"""
-        CREATE TABLE IF NOT EXISTS {self._table_name} (
-            panel_id STRING,
-            location_id STRING,
-            location_name STRING,
-            latitude DOUBLE,
-            longitude DOUBLE,
-            timezone INT,
-            power_output INT,
-            unit_power STRING,
-            temperature DOUBLE,
-            unit_temp STRING,
-            irradiance INT,
-            unit_irradiance STRING,
-            voltage DOUBLE,
-            unit_voltage STRING,
-            current INT,
-            unit_current STRING,
-            inverter_status STRING,
-            timestamp TIMESTAMP
-        ) TIMESTAMP(timestamp) PARTITION BY DAY;
-        """
-        
-        with self._connection.cursor() as cursor:
-            cursor.execute(create_table_sql)
-        self._connection.commit()
-        
-    def write(self, batch: SinkBatch):
-        """Write batch of messages to QuestDB"""
-        print("Creating table...")  
-        if not batch:
-            return
-            
-        insert_sql = f"""
-        INSERT INTO {self._table_name} (
-            panel_id, location_id, location_name, latitude, longitude, timezone,
-            power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
-            voltage, unit_voltage, current, unit_current, inverter_status, timestamp
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        
-        records = []
-        for item in batch:
-            print("Processing batch item...")  
-            # Parse the JSON string from the value field
-            if isinstance(item.value, str):
-                data = json.loads(item.value)
-            else:
-                data = item.value
-                
-            # Convert timestamp to datetime
-            timestamp_ns = data.get('timestamp', 0)
-            timestamp_dt = datetime.fromtimestamp(timestamp_ns / 1_000_000_000)
-            
-            record = (
-                data.get('panel_id'),
-                data.get('location_id'),
-                data.get('location_name'),
-                data.get('latitude'),
-                data.get('longitude'),
-                data.get('timezone'),
-                data.get('power_output'),
-                data.get('unit_power'),
-                data.get('temperature'),
-                data.get('unit_temp'),
-                data.get('irradiance'),
-                data.get('unit_irradiance'),
-                data.get('voltage'),
-                data.get('unit_voltage'),
-                data.get('current'),
-                data.get('unit_current'),
-                data.get('inverter_status'),
-                timestamp_dt
-            )
-            records.append(record)
-        
-        with self._connection.cursor() as cursor:
-            cursor.executemany(insert_sql, records)
-
-# Application setup
+# Test version - just read messages without database connection
 app = Application(
-    consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "questdb-solar-data-writer"),
+    consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "questdb-test-reader"),
     auto_offset_reset="earliest",
     commit_every=int(os.environ.get("BUFFER_SIZE", "10")),
     commit_interval=float(os.environ.get("BUFFER_TIMEOUT", "1.0")),
@@ -127,17 +18,57 @@ input_topic = app.topic(os.environ.get("INPUT_TOPIC"))
 sdf = app.dataframe(input_topic)
 
 # Debug: Print raw message structure
+print("=== Raw Message Structure ===")
 sdf.print(metadata=True)
 
-# Create QuestDB sink
-print("Creating sink...")  
-questdb_sink = QuestDBSink(
-    host=os.environ.get('QUESTDB_HOST'),
-    table_name=os.environ.get('QUESTDB_TABLE_NAME', 'solar_data'),
-    timestamp_column=os.environ.get('TIMESTAMP_COLUMN')
-)
-print("Running sink...")  
-sdf.sink(questdb_sink)
+# Process and display message content
+def process_message(message):
+    print(f"\n=== Processing Message ===")
+    print(f"Message type: {type(message)}")
+    print(f"Message keys: {list(message.keys()) if hasattr(message, 'keys') else 'No keys'}")
+    
+    # Try to extract the actual data
+    try:
+        # If message has a 'value' field containing JSON string
+        if 'value' in message and isinstance(message['value'], str):
+            data = json.loads(message['value'])
+            print(f"Parsed JSON from value field:")
+        elif isinstance(message, str):
+            data = json.loads(message)
+            print(f"Parsed JSON from string message:")
+        else:
+            data = message
+            print(f"Direct message data:")
+            
+        print(f"Data keys: {list(data.keys()) if hasattr(data, 'keys') else 'No data keys'}")
+        
+        # Show some sample fields
+        if hasattr(data, 'get'):
+            print(f"panel_id: {data.get('panel_id')}")
+            print(f"location_name: {data.get('location_name')}")
+            print(f"power_output: {data.get('power_output')}")
+            print(f"timestamp: {data.get('timestamp')}")
+            
+            # Test timestamp conversion
+            timestamp_ns = data.get('timestamp', 0)
+            if timestamp_ns:
+                timestamp_dt = datetime.fromtimestamp(timestamp_ns / 1_000_000_000)
+                print(f"Converted timestamp: {timestamp_dt}")
+        
+        print(f"Full data: {data}")
+        
+    except Exception as e:
+        print(f"Error processing message: {e}")
+        print(f"Raw message: {message}")
+    
+    return message
+
+sdf = sdf.apply(process_message)
+
+print("=== Starting Message Reader Test ===")
+print(f"Input topic: {os.environ.get('INPUT_TOPIC')}")
+print(f"Consumer group: {os.environ.get('CONSUMER_GROUP_NAME', 'questdb-test-reader')}")
 
 if __name__ == "__main__":
-    app.run(count=10, timeout=20)
+    print("Running for 20 messages or 30 seconds...")
+    app.run(count=20, timeout=30)
