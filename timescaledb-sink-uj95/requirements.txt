@@ -1,2 +1,4 @@
 quixstreams[postgresql]==3.20.0
 python-dotenv
+psycopg2-binary
+quixstreams
