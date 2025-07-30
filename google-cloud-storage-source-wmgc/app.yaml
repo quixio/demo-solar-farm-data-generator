@@ -41,8 +41,9 @@ variables:
     description: The file format of the files
     defaultValue: csv
     required: true
-  - name: S3_FILE_COMPRESSION
+  - name: GCS_FILE_COMPRESSION
     inputType: FreeText
+    multiline: false
     description: The type of file compression used for the files
     defaultValue: gzip
     required: true
