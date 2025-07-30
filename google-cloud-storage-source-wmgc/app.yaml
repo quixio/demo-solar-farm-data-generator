@@ -24,8 +24,9 @@ variables:
     description: Your AWS secret
     defaultValue: GCLOUD_PK_JSON
     required: true
-  - name: S3_ACCESS_KEY_ID
-    inputType: Secret
+  - name: GCS_SERVICE_ACCOUNT_EMAIL
+    inputType: FreeText
+    multiline: false
     description: Your AWS Access Key
     required: true
   - name: S3_FOLDER_PATH
