@@ -35,8 +35,9 @@ variables:
     description: The path to the S3 folder to consume
     defaultValue: /
     required: true
-  - name: S3_FILE_FORMAT
+  - name: GCS_FILE_FORMAT
     inputType: FreeText
+    multiline: false
     description: The file format of the files
     defaultValue: json
     required: true
