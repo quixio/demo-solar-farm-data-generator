@@ -28,6 +28,7 @@ variables:
     inputType: FreeText
     multiline: false
     description: Your AWS Access Key
+    defaultValue: doc-publisher@quix-testing-365012.iam.gserviceaccount.com
     required: true
   - name: GCS_FOLDER_PATH
     inputType: FreeText
