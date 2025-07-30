@@ -4,158 +4,177 @@
 # pip install python-dotenv
 # END_DEPENDENCIES
 
-import os
-import json
+"""
+Google Cloud Storage connection tester.
+
+This version lets the `GCS_KEY_FILE_PATH` environment variable hold **either**
+ • a *path* to a JSON key file, **or**
+ • the *raw JSON* for a service-account key.
+
+No temporary files are written—credentials are built in memory when raw JSON is
+supplied.
+"""
+
+from __future__ import annotations
+
 import gzip
+import json
+import os
+from io import StringIO
+
 import pandas as pd
+from dotenv import load_dotenv
 from google.cloud import storage
 from google.oauth2 import service_account
-from dotenv import load_dotenv
 
-def test_gcs_connection():
-    """Test connection to Google Cloud Storage and read sample data."""
-    
-    # Load environment variables
-    load_dotenv()
-    
-    # Get configuration from environment variables
-    bucket_name = os.getenv('GCS_BUCKET_NAME', 'quix-workflow')
-    project_id = os.getenv('GCS_PROJECT_ID', 'quix-testing-365012')
-    service_account_email = os.getenv('GCS_SERVICE_ACCOUNT_EMAIL')
-    key_file_path = os.getenv('GCS_KEY_FILE_PATH')
-    folder_path = os.getenv('GCS_FOLDER_PATH', '/')
-    file_format = os.getenv('GCS_FILE_FORMAT', 'csv')
-    file_compression = os.getenv('GCS_FILE_COMPRESSION', 'gzip')
-    
-    client = None
-    
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ────────────────────────────────────────────────────────────────────────────────
+def build_gcs_client(project_id: str, key_file_or_json: str | None) -> storage.Client:
+    """
+    Build a Google Cloud Storage client using either a key-file path or raw JSON.
+
+    Args:
+        project_id: Google Cloud project ID.
+        key_file_or_json: Path to the key file **or** raw JSON string.
+
+    Returns:
+        An authenticated `google.cloud.storage.Client`.
+    """
+    if key_file_or_json:
+        if os.path.exists(key_file_or_json):
+            print(f"Using service-account key file: {key_file_or_json}")
+            creds = service_account.Credentials.from_service_account_file(key_file_or_json)
+            return storage.Client(credentials=creds, project=project_id)
+
+        try:
+            creds_dict = json.loads(key_file_or_json)
+            print("Using in-memory service-account JSON")
+            creds = service_account.Credentials.from_service_account_info(creds_dict)
+            return storage.Client(credentials=creds, project=project_id)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "GCS_KEY_FILE_PATH must be a file path or valid service-account JSON"
+            ) from exc
+
+    # Fall back to Application Default Credentials
+    print("Using application-default credentials")
+    return storage.Client(project=project_id)
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Main test routine
+# ────────────────────────────────────────────────────────────────────────────────
+def test_gcs_connection() -> None:
+    """Connect to a GCS bucket, list matching files, and print a sample."""
+    load_dotenv()  # Load variables from .env (if present)
+
+    bucket_name = os.getenv("GCS_BUCKET_NAME", "quix-workflow")
+    project_id = os.getenv("GCS_PROJECT_ID", "quix-testing-365012")
+    key_data = os.getenv("GCS_KEY_FILE_PATH")  # path **or** raw JSON
+    folder_path = os.getenv("GCS_FOLDER_PATH", "/")
+    file_format = os.getenv("GCS_FILE_FORMAT", "csv")
+    file_compression = os.getenv("GCS_FILE_COMPRESSION", "gzip")
+
+    print("=" * 60)
+    print("GOOGLE CLOUD STORAGE CONNECTION TEST")
+    print("=" * 60)
+    print(f"Project ID      : {project_id}")
+    print(f"Bucket Name     : {bucket_name}")
+    print(f"Folder Path     : {folder_path}")
+    print(f"File Format     : {file_format}")
+    print(f"Compression     : {file_compression}")
+    print("-" * 60)
+
+    client: storage.Client | None = None
     try:
-        print("=" * 60)
-        print("GOOGLE CLOUD STORAGE CONNECTION TEST")
-        print("=" * 60)
-        print(f"Project ID: {project_id}")
-        print(f"Bucket Name: {bucket_name}")
-        print(f"Service Account: {service_account_email}")
-        print(f"Folder Path: {folder_path}")
-        print(f"File Format: {file_format}")
-        print(f"File Compression: {file_compression}")
-        print("-" * 60)
-        
-        # Initialize GCS client with service account credentials
-        if key_file_path and os.path.exists(key_file_path):
-            print(f"Using service account key file: {key_file_path}")
-            credentials = service_account.Credentials.from_service_account_file(key_file_path)
-            client = storage.Client(credentials=credentials, project=project_id)
-        else:
-            print("Using default credentials or environment-based authentication")
-            client = storage.Client(project=project_id)
-        
-        # Get bucket
-        print(f"\nConnecting to bucket: {bucket_name}")
+        # ── Authenticate ────────────────────────────────────────────────────────
+        client = build_gcs_client(project_id, key_data)
+
+        # ── Bucket checks ───────────────────────────────────────────────────────
         bucket = client.bucket(bucket_name)
-        
-        # Check if bucket exists and is accessible
         if not bucket.exists():
-            raise Exception(f"Bucket '{bucket_name}' does not exist or is not accessible")
-        
-        print(f"✓ Successfully connected to bucket: {bucket_name}")
-        
-        # List files in the specified folder
-        folder_prefix = folder_path.strip('/')
-        if folder_prefix and not folder_prefix.endswith('/'):
-            folder_prefix += '/'
-        
-        print(f"\nLooking for {file_format} files in folder: {folder_path}")
-        
-        # Get list of files matching the criteria
-        blobs = list(bucket.list_blobs(prefix=folder_prefix if folder_prefix != '/' else None))
-        
-        # Filter files by format
-        matching_files = []
-        for blob in blobs:
-            blob_name = blob.name.lower()
-            if file_format.lower() in blob_name:
-                if file_compression == 'gzip' and blob_name.endswith('.gz'):
-                    matching_files.append(blob)
-                elif file_compression != 'gzip' and not blob_name.endswith('.gz'):
-                    matching_files.append(blob)
-        
-        if not matching_files:
-            print(f"⚠ No {file_format} files found in the specified location")
-            print("Available files:")
-            for blob in blobs[:10]:  # Show first 10 files
-                print(f"  - {blob.name}")
+            raise RuntimeError(f"Bucket '{bucket_name}' does not exist or is not accessible")
+        print(f"✓ Connected to bucket: {bucket_name}")
+
+        # ── Build prefix for listing ───────────────────────────────────────────
+        prefix = folder_path.strip("/")
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
+
+        print(f"\nLooking for *.{file_format} files under '{folder_path}'")
+
+        blobs = list(bucket.list_blobs(prefix=prefix if prefix else None))
+
+        def is_match(blob_name: str) -> bool:
+            lower = blob_name.lower()
+            if file_format.lower() not in lower:
+                return False
+            if file_compression == "gzip":
+                return lower.endswith(".gz")
+            return not lower.endswith(".gz")
+
+        matching = [blob for blob in blobs if is_match(blob.name)]
+
+        if not matching:
+            print("⚠ No matching files found. First 10 blobs:")
+            for blob in blobs[:10]:
+                print("  •", blob.name)
             return
-        
-        print(f"Found {len(matching_files)} matching files")
-        
-        # Read from the first matching file
-        target_blob = matching_files[0]
-        print(f"\nReading from file: {target_blob.name}")
-        print(f"File size: {target_blob.size} bytes")
-        print(f"Last modified: {target_blob.time_created}")
-        
-        # Download and read the file content
-        file_content = target_blob.download_as_bytes()
-        
-        # Handle compression
-        if file_compression == 'gzip':
-            print("Decompressing gzip file...")
-            file_content = gzip.decompress(file_content)
-        
-        # Convert to string for processing
-        content_str = file_content.decode('utf-8')
-        
+
+        # ── Read first matching file ───────────────────────────────────────────
+        target = matching[0]
+        print(f"\nReading: {target.name}")
+        print(f"Size          : {target.size} bytes")
+        print(f"Last modified : {target.time_created}")
+
+        data = target.download_as_bytes()
+        if file_compression == "gzip":
+            print("Decompressing…")
+            data = gzip.decompress(data)
+
+        text = data.decode("utf-8")
+
         print("\n" + "=" * 60)
-        print("SAMPLE DATA (First 10 records)")
+        print("SAMPLE DATA (first 10 records)")
         print("=" * 60)
-        
-        # Process based on file format
-        if file_format.lower() == 'csv':
-            # Use pandas to read CSV data
-            from io import StringIO
-            csv_data = pd.read_csv(StringIO(content_str))
-            
-            print(f"CSV Shape: {csv_data.shape} (rows, columns)")
-            print(f"Columns: {list(csv_data.columns)}")
+
+        if file_format.lower() == "csv":
+            df = pd.read_csv(StringIO(text))
+            print(f"Rows × Cols : {df.shape}")
+            print("Columns     :", list(df.columns))
             print("-" * 60)
-            
-            # Print first 10 records
-            sample_records = csv_data.head(10)
-            for idx, row in sample_records.iterrows():
-                print(f"Record {idx + 1}:")
-                for col in csv_data.columns:
+            for idx, row in df.head(10).iterrows():
+                print(f"Record {idx + 1}")
+                for col in df.columns:
                     print(f"  {col}: {row[col]}")
                 print("-" * 40)
-                
         else:
-            # For other formats, show raw content lines
-            lines = content_str.strip().split('\n')
-            print(f"Total lines in file: {len(lines)}")
+            lines = text.splitlines()
+            print(f"{len(lines)} total lines")
             print("-" * 60)
-            
             for i, line in enumerate(lines[:10], 1):
-                print(f"Record {i}:")
-                print(f"  Content: {line[:200]}{'...' if len(line) > 200 else ''}")
+                snippet = line[:200] + ("…" if len(line) > 200 else "")
+                print(f"Record {i}")
+                print("  Content:", snippet)
                 print("-" * 40)
-        
-        print("\n✓ Successfully read sample data from Google Cloud Storage")
-        
-    except Exception as e:
-        print(f"\n❌ Error connecting to Google Cloud Storage:")
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error message: {str(e)}")
-        
-        # Provide troubleshooting hints
+
+        print("\n✓ Successfully read sample data")
+
+    except Exception as exc:  # pylint: disable=broad-except
+        print("\n❌ Error:")
+        print(type(exc).__name__, "-", exc)
         print("\nTroubleshooting hints:")
-        print("1. Verify the service account key file exists and is valid")
-        print("2. Check that the service account has Storage Object Viewer permissions")
-        print("3. Ensure the bucket name and project ID are correct")
-        print("4. Verify the folder path and file format settings")
-        
+        print(" 1. Verify the service-account key (JSON or file) is valid")
+        print(" 2. Ensure the account has 'Storage Object Viewer' permissions")
+        print(" 3. Check bucket name and project ID")
+        print(" 4. Confirm folder path, format, and compression settings")
+
     finally:
         if client:
             print("\nConnection cleanup completed.")
 
+
+# ────────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    test_gcs_connection()
