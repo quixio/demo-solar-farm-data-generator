@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-Google Cloud Storage connection tester.
+Google Cloud Storage connection tester (no compression logic).
 
-This version lets the `GCS_KEY_FILE_PATH` environment variable hold EITHER
- ● a *path* to a JSON key file, OR
- ● the *raw JSON* for a service-account key.
-
-No temporary files are written—credentials are built in memory when raw JSON
-is supplied.
+Environment variables recognised:
+  GCS_BUCKET_NAME        Bucket to read from                        (default: quix-workflow)
+  GCS_PROJECT_ID         GCP project ID                             (default: quix-testing-365012)
+  GCS_KEY_FILE_PATH      Path to a JSON key OR the raw JSON itself  (required unless ADC is set up)
+  GCS_FOLDER_PATH        Folder/prefix inside the bucket            (default: /)
+  GCS_FILE_FORMAT        Expected file extension                    (default: csv)
 """
 
 from __future__ import annotations
 
-import gzip
 import json
 import os
 from io import StringIO
@@ -24,81 +23,57 @@ from google.oauth2 import service_account
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────────────────────────────────────
 def build_gcs_client(project_id: str, key_file_or_json: str | None) -> storage.Client:
-    """
-    Build a Google Cloud Storage client from a key-file path or raw JSON.
-
-    Args:
-        project_id: Google Cloud project ID.
-        key_file_or_json: Path to the key file **or** raw JSON string.
-
-    Returns:
-        An authenticated `google.cloud.storage.Client`.
-    """
+    """Create a GCS client from a key-file path or raw JSON."""
     if key_file_or_json:
         if os.path.exists(key_file_or_json):
+            creds = service_account.Credentials.from_service_account_file(key_file_or_json)
             print(f"Using service-account key file: {key_file_or_json}")
-            creds = service_account.Credentials.from_service_account_file(
-                key_file_or_json
-            )
             return storage.Client(credentials=creds, project=project_id)
 
-        # Try treating the env-var value as raw JSON
         try:
             creds_dict = json.loads(key_file_or_json)
-            print("Using in-memory service-account JSON")
             creds = service_account.Credentials.from_service_account_info(creds_dict)
+            print("Using in-memory service-account JSON")
             return storage.Client(credentials=creds, project=project_id)
         except json.JSONDecodeError as exc:
-            raise ValueError(
-                "GCS_KEY_FILE_PATH must be a file path or valid service-account JSON"
-            ) from exc
+            raise ValueError("GCS_KEY_FILE_PATH must be a file path or valid JSON") from exc
 
-    # Fall back to Application Default Credentials
     print("Using application-default credentials")
     return storage.Client(project=project_id)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Main routine
-# ──────────────────────────────────────────────────────────────────────────────
 def test_gcs_connection() -> None:
-    """Connect to a GCS bucket, list matching files, and print a sample."""
+    """Connect to GCS, list .csv files, and print a sample of the first one."""
     load_dotenv()
 
-    bucket_name     = os.getenv("GCS_BUCKET_NAME",  "quix-workflow")
-    project_id      = os.getenv("GCS_PROJECT_ID",   "quix-testing-365012")
-    key_data        = os.getenv("GCS_KEY_FILE_PATH")        # path OR raw JSON
-    folder_path     = os.getenv("GCS_FOLDER_PATH",   "/")
-    file_format     = os.getenv("GCS_FILE_FORMAT",   "csv")
-    file_compression = os.getenv("GCS_FILE_COMPRESSION", "gzip")
+    bucket_name  = os.getenv("GCS_BUCKET_NAME",  "quix-workflow")
+    project_id   = os.getenv("GCS_PROJECT_ID",   "quix-testing-365012")
+    key_data     = os.getenv("GCS_KEY_FILE_PATH")
+    folder_path  = os.getenv("GCS_FOLDER_PATH",  "/")
+    file_format  = os.getenv("GCS_FILE_FORMAT",  "csv").lower()
 
     print("=" * 60)
-    print("GOOGLE CLOUD STORAGE CONNECTION TEST")
+    print("GOOGLE CLOUD STORAGE CONNECTION TEST (no compression)")
     print("=" * 60)
-    print(f"Project ID   : {project_id}")
-    print(f"Bucket Name  : {bucket_name}")
-    print(f"Folder Path  : {folder_path}")
-    print(f"File Format  : {file_format}")
-    print(f"Compression  : {file_compression}")
+    print(f"Project ID  : {project_id}")
+    print(f"Bucket Name : {bucket_name}")
+    print(f"Folder Path : {folder_path}")
+    print(f"File Format : {file_format}")
     print("-" * 60)
 
     client: storage.Client | None = None
     try:
-        # Authenticate
         client = build_gcs_client(project_id, key_data)
 
-        # Bucket checks
+        # Bucket check
         bucket = client.bucket(bucket_name)
         if not bucket.exists():
-            raise RuntimeError(
-                f"Bucket '{bucket_name}' does not exist or is not accessible"
-            )
+            raise RuntimeError(f"Bucket '{bucket_name}' does not exist or is not accessible")
         print(f"✓ Connected to bucket: {bucket_name}")
 
-        # Build prefix for listing
+        # Prefix handling
         prefix = folder_path.strip("/")
         if prefix and not prefix.endswith("/"):
             prefix += "/"
@@ -106,17 +81,7 @@ def test_gcs_connection() -> None:
         print(f"Looking for *.{file_format} files under '{folder_path}'")
 
         blobs = list(bucket.list_blobs(prefix=prefix if prefix else None))
-
-        # Simple filter
-        def is_match(blob_name: str) -> bool:
-            lower = blob_name.lower()
-            if file_format.lower() not in lower:
-                return False
-            if file_compression == "gzip":
-                return lower.endswith(".gz")
-            return not lower.endswith(".gz")
-
-        matching = [b for b in blobs if is_match(b.name)]
+        matching = [b for b in blobs if b.name.lower().endswith(f".{file_format}")]
 
         if not matching:
             print("⚠ No matching files found. First 10 blobs:")
@@ -130,18 +95,13 @@ def test_gcs_connection() -> None:
         print(f"Size         : {target.size} bytes")
         print(f"Last modified: {target.time_created}")
 
-        data = target.download_as_bytes()
-        if file_compression == "gzip":
-            print("Decompressing…")
-            data = gzip.decompress(data)
-
-        text = data.decode("utf-8")
+        text = target.download_as_text(encoding="utf-8")
 
         print("\n" + "=" * 60)
         print("SAMPLE DATA (first 10 records)")
         print("=" * 60)
 
-        if file_format.lower() == "csv":
+        if file_format == "csv":
             df = pd.read_csv(StringIO(text))
             print(f"Rows × Cols : {df.shape}")
             print("Columns     :", list(df.columns))
@@ -153,24 +113,16 @@ def test_gcs_connection() -> None:
                 print("-" * 40)
         else:
             lines = text.splitlines()
-            print(f"{len(lines)} total lines")
-            print("-" * 60)
             for i, line in enumerate(lines[:10], 1):
-                snippet = line[:200] + ("…" if len(line) > 200 else "")
-                print(f"Record {i}")
-                print("  Content:", snippet)
-                print("-" * 40)
-
+                print(f"{i}: {line}")
         print("\n✓ Successfully read sample data")
 
     except Exception as exc:  # pylint: disable=broad-except
-        print("\n❌ Error:")
-        print(type(exc).__name__, "-", exc)
+        print("\n❌ Error:", type(exc).__name__, "-", exc)
         print("\nTroubleshooting hints:")
-        print(" 1. Verify the service-account key (JSON or file) is valid")
-        print(" 2. Ensure the account has 'Storage Object Viewer' permissions")
-        print(" 3. Check bucket name and project ID")
-        print(" 4. Confirm folder path, format, and compression settings")
+        print(" 1. Check the service-account key")
+        print(" 2. Verify IAM permissions ('Storage Object Viewer' at minimum)")
+        print(" 3. Confirm bucket name, project ID, and folder path")
 
     finally:
         if client:
