@@ -18,9 +18,11 @@ variables:
     multiline: false
     description: The region of your S3 bucket
     required: true
-  - name: S3_SECRET
+  - name: GCS_KEY_FILE_PATH
     inputType: Secret
+    multiline: false
     description: Your AWS secret
+    defaultValue: GCLOUD_PK_JSON
     required: true
   - name: S3_ACCESS_KEY_ID
     inputType: Secret
