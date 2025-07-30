@@ -11,6 +11,7 @@ variables:
     inputType: FreeText
     multiline: false
     description: The URI or URL to your S3 bucket
+    defaultValue: quix-workflow
     required: true
   - name: S3_REGION
     inputType: FreeText
