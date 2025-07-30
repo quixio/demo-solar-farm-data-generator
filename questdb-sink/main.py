@@ -9,126 +9,165 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class QuestDBSink(BatchingSink):
-    def __init__(self):
+    def __init__(self, host, port, database, username, api_key, table_name):
         super().__init__()
-        self._connection = None
-        self._table_name = os.environ.get('QUESTDB_TABLE_NAME', 'solar_data')
-
+        self.host = host
+        self.port = port
+        self.database = database
+        self.username = username
+        self.api_key = api_key
+        self.table_name = table_name
+        self.connection = None
+        
     def setup(self):
+        """Setup the database connection and create table if needed"""
         try:
-            port = int(os.environ.get('QUESTDB_PORT', '8812'))
-        except ValueError:
-            port = 8812
+            self.connection = psycopg2.connect(
+                host=self.host,
+                port=self.port,
+                database=self.database,
+                user=self.username,
+                password=self.api_key
+            )
+            self.connection.autocommit = True
             
-        # Connect to QuestDB using PostgreSQL wire protocol
-        self._connection = psycopg2.connect(
-            host=os.environ.get('QUESTDB_HOST'),
-            port=port,
-            database=os.environ.get('QUESTDB_DATABASE', 'qdb'),
-            user=os.environ.get('QUESTDB_API_KEY'),
-            password=os.environ.get('QUESTDB_API_KEY')
-        )
-        self._connection.autocommit = True
-        
-        # Create table if it doesn't exist
-        self._create_table_if_not_exists()
-
+            # Create table if it doesn't exist
+            self._create_table_if_not_exists()
+            
+        except Exception as e:
+            print(f"Failed to connect to QuestDB: {e}")
+            raise
+    
     def _create_table_if_not_exists(self):
-        cursor = self._connection.cursor()
-        
+        """Create the table with proper schema if it doesn't exist"""
         create_table_sql = f"""
-        CREATE TABLE IF NOT EXISTS {self._table_name} (
-            panel_id SYMBOL,
-            location_id SYMBOL,
+        CREATE TABLE IF NOT EXISTS {self.table_name} (
+            panel_id STRING,
+            location_id STRING,
             location_name STRING,
             latitude DOUBLE,
             longitude DOUBLE,
             timezone INT,
             power_output INT,
-            unit_power SYMBOL,
+            unit_power STRING,
             temperature DOUBLE,
-            unit_temp SYMBOL,
+            unit_temp STRING,
             irradiance INT,
-            unit_irradiance SYMBOL,
+            unit_irradiance STRING,
             voltage DOUBLE,
-            unit_voltage SYMBOL,
+            unit_voltage STRING,
             current INT,
-            unit_current SYMBOL,
-            inverter_status SYMBOL,
-            timestamp TIMESTAMP
+            unit_current STRING,
+            inverter_status STRING,
+            timestamp TIMESTAMP,
+            message_datetime TIMESTAMP
         ) TIMESTAMP(timestamp) PARTITION BY DAY;
         """
         
-        cursor.execute(create_table_sql)
-        cursor.close()
-
+        with self.connection.cursor() as cursor:
+            cursor.execute(create_table_sql)
+            self.connection.commit()
+            print(f"Table {self.table_name} created or already exists")
+    
     def write(self, batch: SinkBatch):
-        cursor = self._connection.cursor()
+        """Write batch of messages to QuestDB"""
+        if not self.connection:
+            raise RuntimeError("Database connection not established")
+            
+        insert_sql = f"""
+        INSERT INTO {self.table_name} (
+            panel_id, location_id, location_name, latitude, longitude, timezone,
+            power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
+            voltage, unit_voltage, current, unit_current, inverter_status, timestamp, message_datetime
+        ) VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+        )
+        """
         
-        for item in batch:
-            print(f'Raw message: {item}')
+        with self.connection.cursor() as cursor:
+            for item in batch:
+                print(f"Raw message: {item}")
+                
+                # Parse the JSON string from the value field
+                if isinstance(item.value, str):
+                    data = json.loads(item.value)
+                else:
+                    data = item.value
+                
+                # Convert timestamp to datetime
+                timestamp_ns = data.get('timestamp', 0)
+                timestamp_dt = datetime.fromtimestamp(timestamp_ns / 1_000_000_000)
+                
+                # Parse message datetime
+                message_dt = datetime.fromisoformat(item.headers.get('dateTime', '').replace('Z', '+00:00')) if item.headers.get('dateTime') else datetime.now()
+                
+                # Map data to table schema
+                values = (
+                    data.get('panel_id'),
+                    data.get('location_id'),
+                    data.get('location_name'),
+                    data.get('latitude'),
+                    data.get('longitude'),
+                    data.get('timezone'),
+                    data.get('power_output'),
+                    data.get('unit_power'),
+                    data.get('temperature'),
+                    data.get('unit_temp'),
+                    data.get('irradiance'),
+                    data.get('unit_irradiance'),
+                    data.get('voltage'),
+                    data.get('unit_voltage'),
+                    data.get('current'),
+                    data.get('unit_current'),
+                    data.get('inverter_status'),
+                    timestamp_dt,
+                    message_dt
+                )
+                
+                cursor.execute(insert_sql, values)
             
-            # Parse the JSON value from the message
-            if isinstance(item.value, str):
-                data = json.loads(item.value)
-            else:
-                data = item.value
-            
-            # Convert timestamp to datetime
-            timestamp_ms = data.get('timestamp', 0)
-            # Convert nanoseconds to milliseconds if needed
-            if timestamp_ms > 1e12:  # If timestamp is in nanoseconds
-                timestamp_ms = timestamp_ms // 1000000
-            dt = datetime.fromtimestamp(timestamp_ms / 1000.0)
-            
-            # Insert data into QuestDB
-            insert_sql = f"""
-            INSERT INTO {self._table_name} (
-                panel_id, location_id, location_name, latitude, longitude, timezone,
-                power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
-                voltage, unit_voltage, current, unit_current, inverter_status, timestamp
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """
-            
-            cursor.execute(insert_sql, (
-                data.get('panel_id'),
-                data.get('location_id'),
-                data.get('location_name'),
-                data.get('latitude'),
-                data.get('longitude'),
-                data.get('timezone'),
-                data.get('power_output'),
-                data.get('unit_power'),
-                data.get('temperature'),
-                data.get('unit_temp'),
-                data.get('irradiance'),
-                data.get('unit_irradiance'),
-                data.get('voltage'),
-                data.get('unit_voltage'),
-                data.get('current'),
-                data.get('unit_current'),
-                data.get('inverter_status'),
-                dt
-            ))
-        
-        cursor.close()
+            self.connection.commit()
+            print(f"Successfully wrote {len(batch)} records to QuestDB")
 
-# Initialize the Quix application
+# Configuration
+try:
+    port = int(os.environ.get('QUESTDB_PORT', '8812'))
+except ValueError:
+    port = 8812
+
+try:
+    buffer_size = int(os.environ.get('BUFFER_SIZE', '1000'))
+except ValueError:
+    buffer_size = 1000
+
+try:
+    buffer_timeout = float(os.environ.get('BUFFER_TIMEOUT', '1.0'))
+except ValueError:
+    buffer_timeout = 1.0
+
+# Initialize QuestDB sink
+questdb_sink = QuestDBSink(
+    host=os.environ.get('QUESTDB_HOST', 'localhost'),
+    port=port,
+    database=os.environ.get('QUESTDB_DATABASE', 'qdb'),
+    username="admin",  # Hardcoded as requested
+    api_key=os.environ.get('QUESTDB_API_KEY'),
+    table_name=os.environ.get('QUESTDB_TABLE_NAME', 'solar_data')
+)
+
+# Initialize application
 app = Application(
-    consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "questdb-sink"),
+    consumer_group=os.environ.get('CONSUMER_GROUP_NAME', 'questdb-solar-data-writer'),
     auto_offset_reset="earliest",
-    commit_every=int(os.environ.get("BUFFER_SIZE", "100")),
-    commit_interval=float(os.environ.get("BUFFER_TIMEOUT", "5.0")),
+    commit_every=buffer_size,
+    commit_interval=buffer_timeout,
 )
 
 # Set up input topic
 input_topic = app.topic(os.environ.get('INPUT_TOPIC'))
-
-# Create the custom QuestDB sink
-questdb_sink = QuestDBSink()
-
-# Create streaming dataframe and sink data
 sdf = app.dataframe(input_topic)
+
+# Sink data to QuestDB
 sdf.sink(questdb_sink)
 
 if __name__ == "__main__":
