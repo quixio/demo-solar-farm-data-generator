@@ -17,6 +17,7 @@ variables:
     inputType: FreeText
     multiline: false
     description: The region of your S3 bucket
+    defaultValue: quix-testing-365012
     required: true
   - name: GCS_KEY_FILE_PATH
     inputType: Secret
