@@ -27,7 +27,7 @@ variables:
     required: true
   - name: QUESTDB_TABLE_NAME
     inputType: FreeText
-    defaultValue: data_sink_5m7u
+    defaultValue: data_sink_l5sj
     required: true
   - name: QUESTDB_API_KEY
     inputType: Secret
