@@ -13,8 +13,9 @@ variables:
     description: The URI or URL to your S3 bucket
     defaultValue: quix-workflow
     required: true
-  - name: S3_REGION
+  - name: GCS_PROJECT_ID
     inputType: FreeText
+    multiline: false
     description: The region of your S3 bucket
     required: true
   - name: S3_SECRET
