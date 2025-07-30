@@ -7,8 +7,9 @@ variables:
     description: Name of the output topic to write into
     defaultValue: output
     required: true
-  - name: S3_BUCKET
+  - name: GCS_BUCKET_NAME
     inputType: FreeText
+    multiline: false
     description: The URI or URL to your S3 bucket
     required: true
   - name: S3_REGION
