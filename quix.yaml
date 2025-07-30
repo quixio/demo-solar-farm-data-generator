@@ -345,3 +345,4 @@ topics:
   - name: solar-data
   - name: solar-farm
   - name: input
+  - name: output
