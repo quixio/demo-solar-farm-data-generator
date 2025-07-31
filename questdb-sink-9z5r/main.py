@@ -105,6 +105,7 @@ input_topic = app.topic(os.environ["input"])
 sdf = app.dataframe(input_topic)
 
 questdb_sink = QuestDBSink()
+sdf.print(pretty=True,metadata=True)
 sdf.sink(questdb_sink)
 
 if __name__ == "__main__":
