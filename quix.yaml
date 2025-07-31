@@ -338,51 +338,6 @@ deployments:
         inputType: FreeText
         required: true
         value: qdb
-  - name: QuestDB-deployment-829a
-    application: questdb-sink-9z5r
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
-    variables:
-      - name: QDB_BUFFER_SIZE
-        inputType: FreeText
-        required: true
-        value: 1000
-      - name: QDB_CONSUMER_GROUP_NAME
-        inputType: FreeText
-        required: true
-        value: questdb-consumer-group
-      - name: input
-        inputType: InputTopic
-        required: true
-        value: solar-data
-      - name: QDB_TABLE
-        inputType: FreeText
-        required: true
-        value: data_sink_kzep
-      - name: QDB_PORT
-        inputType: FreeText
-        required: true
-        value: 8812
-      - name: QDB_HOST
-        inputType: FreeText
-        required: true
-        value: questdb
-      - name: QDB_TOKEN_KEY
-        inputType: Secret
-        required: true
-        secretKey: QUESTDB_PW
-      - name: QDB_TIMESTAMP_COLUMN
-        inputType: FreeText
-        required: true
-        value: timestamp
-      - name: QDB_BUFFER_TIMEOUT
-        inputType: FreeText
-        required: true
-        value: 1
 
 # This section describes the Topics of the data pipeline
 topics:
