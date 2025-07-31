@@ -9,9 +9,6 @@ variables:
     inputType: FreeText
     defaultValue: questdb-consumer-group
     required: true
-  - name: QUESTDB_AUTH_TOKEN
-    inputType: FreeText
-    required: true
   - name: QUESTDB_INPUT
     inputType: InputTopic
     defaultValue: solar-data
@@ -20,13 +17,17 @@ variables:
     inputType: FreeText
     defaultValue: 1
     required: true
+  - name: QUESTDB_DATABASE
+    inputType: FreeText
+    defaultValue: test_db
+    required: true
   - name: QUESTDB_PASSWORD_KEY
     inputType: Secret
     defaultValue: QUESTDB_PW
     required: true
   - name: QUESTDB_TABLE_NAME
     inputType: FreeText
-    defaultValue: data_sink_er3x
+    defaultValue: data_sink_lo82
     required: true
   - name: QUESTDB_HOST
     inputType: FreeText
