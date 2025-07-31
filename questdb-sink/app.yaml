@@ -34,7 +34,7 @@ variables:
     required: true
   - name: QUESTDB_TABLE_NAME
     inputType: FreeText
-    defaultValue: data_sink_hruc
+    defaultValue: data_sink_2oo3
     required: true
   - name: QUESTDB_HOST
     inputType: FreeText
