@@ -13,9 +13,9 @@ variables:
     inputType: InputTopic
     defaultValue: solar-data
     required: true
-  - name: QUESTDB_DATABASE
+  - name: QUESTDB_BUFFER_TIMEOUT
     inputType: FreeText
-    defaultValue: test_db
+    defaultValue: 1
     required: true
   - name: QUESTDB_PASSWORD_KEY
     inputType: Secret
@@ -23,7 +23,7 @@ variables:
     required: true
   - name: QUESTDB_TABLE_NAME
     inputType: FreeText
-    defaultValue: data_sink_1mun
+    defaultValue: data_sink_o99k
     required: true
   - name: QUESTDB_HOST
     inputType: FreeText
