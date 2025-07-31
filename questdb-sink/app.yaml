@@ -5,11 +5,6 @@ variables:
     inputType: FreeText
     defaultValue: admin
     required: true
-  - name: QUESTDB_BUFFER_SIZE
-    inputType: FreeText
-    multiline: false
-    defaultValue: 1000
-    required: true
   - name: QUESTDB_CONSUMER_GROUP_NAME
     inputType: FreeText
     defaultValue: questdb-consumer-group
@@ -17,10 +12,6 @@ variables:
   - name: QUESTDB_INPUT
     inputType: InputTopic
     defaultValue: solar-data
-    required: true
-  - name: QUESTDB_BUFFER_TIMEOUT
-    inputType: FreeText
-    defaultValue: 1
     required: true
   - name: QUESTDB_DATABASE
     inputType: FreeText
@@ -30,13 +21,9 @@ variables:
     inputType: Secret
     defaultValue: QUESTDB_PW
     required: true
-  - name: QUESTDB_PORT
-    inputType: FreeText
-    defaultValue: 8812
-    required: true
   - name: QUESTDB_TABLE_NAME
     inputType: FreeText
-    defaultValue: data_sink_2oo3
+    defaultValue: data_sink_1mun
     required: true
   - name: QUESTDB_HOST
     inputType: FreeText
