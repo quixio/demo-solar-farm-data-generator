@@ -1,4 +1,0 @@
-quixstreams[s3]
-python-dotenv
-google-cloud-storage
-pandas
