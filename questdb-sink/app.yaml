@@ -23,7 +23,7 @@ variables:
     required: true
   - name: QUESTDB_TABLE_NAME
     inputType: FreeText
-    defaultValue: data_sink_o99k
+    defaultValue: data_sink_1r9b
     required: true
   - name: QUESTDB_HOST
     inputType: FreeText
