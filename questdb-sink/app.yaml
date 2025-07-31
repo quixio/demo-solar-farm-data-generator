@@ -7,6 +7,8 @@ variables:
     required: true
   - name: QUESTDB_BUFFER_SIZE
     inputType: FreeText
+    multiline: false
+    defaultValue: 1000
     required: true
   - name: QUESTDB_CONSUMER_GROUP_NAME
     inputType: FreeText
