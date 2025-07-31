@@ -19,7 +19,8 @@ variables:
     required: true
   - name: QDB_PORT
     inputType: FreeText
-    defaultValue: 8812
+    multiline: false
+    defaultValue: 9000
     required: true
   - name: QDB_HOST
     inputType: FreeText
