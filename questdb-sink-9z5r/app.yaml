@@ -5,25 +5,21 @@ variables:
     inputType: FreeText
     defaultValue: 1000
     required: true
-  - name: QDB_DATABASE
-    inputType: FreeText
-    defaultValue: metrics
-    required: true
   - name: QDB_CONSUMER_GROUP_NAME
     inputType: FreeText
     defaultValue: questdb-consumer-group
     required: true
+  - name: input
+    inputType: InputTopic
+    defaultValue: solar-data
+    required: true
   - name: QDB_TABLE
     inputType: FreeText
-    defaultValue: data_sink_7ues
+    defaultValue: data_sink_kzep
     required: true
   - name: QDB_PORT
     inputType: FreeText
     defaultValue: 8812
-    required: true
-  - name: input
-    inputType: InputTopic
-    defaultValue: solar-data
     required: true
   - name: QDB_HOST
     inputType: FreeText
