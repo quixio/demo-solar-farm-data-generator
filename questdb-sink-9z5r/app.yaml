@@ -1,4 +1,4 @@
-name: questdb-sink-draft-9z5r
+name: questdb-sink-weird-no-sink
 language: python
 variables:
   - name: QDB_BUFFER_SIZE
