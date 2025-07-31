@@ -9,6 +9,9 @@ variables:
     inputType: FreeText
     defaultValue: questdb-consumer-group
     required: true
+  - name: QUESTDB_AUTH_TOKEN
+    inputType: FreeText
+    required: true
   - name: QUESTDB_INPUT
     inputType: InputTopic
     defaultValue: solar-data
@@ -23,7 +26,7 @@ variables:
     required: true
   - name: QUESTDB_TABLE_NAME
     inputType: FreeText
-    defaultValue: data_sink_1r9b
+    defaultValue: data_sink_er3x
     required: true
   - name: QUESTDB_HOST
     inputType: FreeText
