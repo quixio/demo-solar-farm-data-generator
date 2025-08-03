@@ -5,6 +5,10 @@ variables:
     inputType: FreeText
     defaultValue: questdb
     required: true
+  - name: QDB_TIMESTAMP_COLUMN
+    inputType: FreeText
+    defaultValue: timestamp
+    required: true
   - name: QDB_TOKEN_KEY
     inputType: Secret
     defaultValue: QUESTDB_PW
@@ -35,7 +39,7 @@ variables:
     required: true
   - name: QDB_TABLE
     inputType: FreeText
-    defaultValue: data_sink_9svc
+    defaultValue: data_sink_zek0
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
