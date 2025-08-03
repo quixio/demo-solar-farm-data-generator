@@ -39,7 +39,7 @@ variables:
     required: true
   - name: QDB_TABLE
     inputType: FreeText
-    defaultValue: data_sink_zek0
+    defaultValue: data_sink_pjzf
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
