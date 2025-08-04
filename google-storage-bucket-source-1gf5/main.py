@@ -31,12 +31,11 @@ class GoogleStorageSource(Source):
             self.client = storage.Client(project=self.project_id, credentials=credentials)
             self.bucket = self.client.bucket(self.bucket_name)
             
-            # Test connection
             self.bucket.exists()
             logger.info(f"Successfully connected to Google Storage bucket: {self.bucket_name}")
             return True
         except Exception as e:
-            logger.error(f"Failed to connect to Google Storage: {str(e)}")
+            logger.error(f"Failed to connect to Google Storage")
             return False
 
     def run(self):
@@ -45,12 +44,10 @@ class GoogleStorageSource(Source):
             return
 
         try:
-            # Clean up folder path for prefix search
             prefix = self.folder_path.strip('/')
             if prefix and not prefix.endswith('/'):
                 prefix += '/'
             
-            # List all blobs with the specified prefix
             blobs = list(self.bucket.list_blobs(prefix=prefix if prefix != '/' else ''))
             
             if not blobs:
@@ -63,27 +60,22 @@ class GoogleStorageSource(Source):
                 if not self.running or self.processed_count >= self.max_messages:
                     break
 
-                # Skip directories
                 if blob.name.endswith('/'):
                     continue
 
                 try:
-                    # Read file content
                     if blob.size and blob.size > 0:
                         content = blob.download_as_text(encoding='utf-8')
                         
-                        # Process content based on file format
                         if self.file_format.lower() == 'csv':
                             lines = content.strip().split('\n')
                             for i, line in enumerate(lines):
                                 if not self.running or self.processed_count >= self.max_messages:
                                     break
                                 
-                                # Skip empty lines
                                 if not line.strip():
                                     continue
                                 
-                                # Create message
                                 message_data = {
                                     'file_name': blob.name,
                                     'file_size': blob.size,
@@ -94,7 +86,6 @@ class GoogleStorageSource(Source):
                                     'folder_path': self.folder_path
                                 }
                                 
-                                # Serialize and produce message
                                 msg = self.serialize(
                                     key=f"{blob.name}_{i+1}",
                                     value=message_data
@@ -108,7 +99,6 @@ class GoogleStorageSource(Source):
                                 self.processed_count += 1
                                 logger.info(f"Processed message {self.processed_count} from file: {blob.name}")
                                 
-                                # Small delay to prevent overwhelming
                                 time.sleep(0.1)
                         
                         elif self.file_format.lower() == 'json':
@@ -136,10 +126,9 @@ class GoogleStorageSource(Source):
                                 self.processed_count += 1
                                 logger.info(f"Processed JSON message from file: {blob.name}")
                             except json.JSONDecodeError as e:
-                                logger.error(f"Failed to parse JSON from file {blob.name}: {str(e)}")
+                                logger.error(f"Failed to parse JSON from file {blob.name}")
                         
                         else:
-                            # Handle other formats as plain text
                             message_data = {
                                 'file_name': blob.name,
                                 'file_size': blob.size,
@@ -167,26 +156,31 @@ class GoogleStorageSource(Source):
                         logger.warning(f"Skipping empty file: {blob.name}")
 
                 except Exception as e:
-                    logger.error(f"Error processing file {blob.name}: {str(e)}")
+                    logger.error(f"Error processing file {blob.name}")
                     continue
 
             logger.info(f"Completed processing. Total messages processed: {self.processed_count}")
 
         except Exception as e:
-            logger.error(f"Error during processing: {str(e)}")
-        finally:
-            self.cleanup()
+            logger.error(f"Error during processing")
 
-    def cleanup(self):
+    def cleanup(self, failed: bool = False):
         if self.client:
-            self.client.close()
-            logger.info("Google Storage client connection closed")
+            try:
+                self.client.close()
+                logger.info("Google Storage client connection closed")
+            except Exception as ex:
+                logger.warning(f"Error while closing GCS client")
+
+        try:
+            super().cleanup(failed=failed)
+        except AttributeError:
+            pass
 
     def default_topic(self):
         return f"source__{self.bucket_name}_{self.folder_path.replace('/', '_')}"
 
 def main():
-    # Get configuration from environment variables
     bucket_name = os.environ.get('GS_BUCKET')
     project_id = os.environ.get('GS_PROJECT_ID')
     credentials_json = os.environ.get('GS_SECRET_KEY')
@@ -195,7 +189,6 @@ def main():
     compression = os.environ.get('GS_FILE_COMPRESSION', 'none')
     output_topic_name = os.environ.get('output', 'output')
 
-    # Validate required environment variables
     if not bucket_name:
         raise ValueError("GS_BUCKET environment variable is required")
     if not project_id:
@@ -203,13 +196,10 @@ def main():
     if not credentials_json:
         raise ValueError("GS_SECRET_KEY environment variable is required")
 
-    # Create Quix Streams application
     app = Application()
 
-    # Create output topic
     output_topic = app.topic(output_topic_name)
 
-    # Create Google Storage source
     source = GoogleStorageSource(
         name="google-storage-source",
         bucket_name=bucket_name,
@@ -220,10 +210,8 @@ def main():
         compression=compression
     )
 
-    # Create streaming dataframe
     sdf = app.dataframe(topic=output_topic, source=source)
     
-    # Print messages for debugging
     sdf.print(metadata=True)
 
     logger.info(f"Starting Google Storage source application")
@@ -233,7 +221,6 @@ def main():
     logger.info(f"File format: {file_format}")
     logger.info(f"Output topic: {output_topic_name}")
 
-    # Run the application
     app.run()
 
 if __name__ == "__main__":
