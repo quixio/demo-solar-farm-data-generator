@@ -25,6 +25,8 @@ variables:
     required: true
   - name: GS_COMPRESSION
     inputType: FreeText
+    multiline: false
+    defaultValue: None
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
