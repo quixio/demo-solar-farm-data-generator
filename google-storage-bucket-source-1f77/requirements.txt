@@ -1,2 +1,5 @@
 quixstreams[s3]==3.7.0
 python-dotenv
+google-cloud-storage
+pandas
+tempfile
