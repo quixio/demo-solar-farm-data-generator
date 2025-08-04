@@ -1,9 +1,10 @@
 name: google-storage-buckets-source-draft-44wj
 language: python
 variables:
-  - name: GOOGLE_STORAGE_FILE_FORMAT
+  - name: GS_FOLDER_PATH
     inputType: FreeText
-    defaultValue: csv
+    multiline: false
+    defaultValue: /
     required: true
   - name: GS_API_KEY
     inputType: Secret
