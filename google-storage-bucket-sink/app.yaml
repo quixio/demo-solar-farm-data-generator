@@ -26,6 +26,10 @@ variables:
     inputType: FreeText
     defaultValue: csv
     required: true
+  - name: output
+    inputType: OutputTopic
+    multiline: false
+    defaultValue: output
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
