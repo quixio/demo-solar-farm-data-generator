@@ -49,8 +49,6 @@ variables:
     inputType: FreeText
     defaultValue: admin
     required: true
-  - name: QUESTDB_USERNAME
-    inputType: FreeText
   - name: CONSUMER_GROUP_NAME
     inputType: FreeText
     defaultValue: questdb-consumer
