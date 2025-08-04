@@ -14,9 +14,10 @@ variables:
     inputType: OutputTopic
     defaultValue: output
     required: true
-  - name: GOOGLE_STORAGE_FOLDER_PATH
+  - name: GS_PROJECT_ID
     inputType: FreeText
-    defaultValue: 'data/  # Sensible default path'
+    multiline: false
+    defaultValue: quix-testing-365012
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
