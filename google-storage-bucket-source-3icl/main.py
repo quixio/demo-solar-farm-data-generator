@@ -341,7 +341,6 @@ def main():
     try:
         # Create application
         app = Application(
-            broker_address=os.getenv("KAFKA_BROKER_ADDRESS", "localhost:9092"),
             consumer_group="gcs-source-group",
             auto_offset_reset="latest"
         )
