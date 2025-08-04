@@ -10,9 +10,10 @@ variables:
     multiline: false
     defaultValue: GCLOUD_PK_JSON
     required: true
-  - name: GOOGLE_STORAGE_OUTPUT_BUCKET
-    inputType: OutputTopic
-    defaultValue: output
+  - name: GS_BUCKET
+    inputType: FreeText
+    multiline: false
+    defaultValue: quix-workflow
     required: true
   - name: GS_PROJECT_ID
     inputType: FreeText
