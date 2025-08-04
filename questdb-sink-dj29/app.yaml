@@ -60,7 +60,9 @@ variables:
     inputType: FreeText
     defaultValue: 1000
   - name: input
-    inputType: FreeText
+    inputType: InputTopic
+    multiline: false
+    defaultValue: solar-data
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
