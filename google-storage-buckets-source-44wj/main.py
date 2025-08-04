@@ -1,125 +1,120 @@
-# DEPENDENCIES:
-# pip install google-cloud-storage
-# pip install python-dotenv
-# END_DEPENDENCIES
+"""
+Secure GCS helper for Quix-injected service-account JSON
+Preview now shows first 100 CSV rows instead of first 500 chars.
+
+pip install google-cloud-storage
+"""
 
 import os
 import json
-import tempfile
+import base64
+import csv
+import logging
+from io import StringIO
+from typing import Dict, Optional
+
 from google.cloud import storage
 from google.oauth2 import service_account
-from dotenv import load_dotenv
 
-def test_google_storage_connection():
-    """Test connection to Google Cloud Storage and read sample data."""
-    
-    # Load environment variables
-    load_dotenv()
-    
-    # Get configuration from environment variables
-    bucket_name = os.getenv('GOOGLE_STORAGE_OUTPUT_BUCKET')
-    folder_path = os.getenv('GOOGLE_STORAGE_FOLDER_PATH', 'data/')
-    file_format = os.getenv('GOOGLE_STORAGE_FILE_FORMAT', 'csv')
-    credentials_secret = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-    
-    if not bucket_name:
-        raise ValueError("GOOGLE_STORAGE_OUTPUT_BUCKET environment variable is required")
-    
-    if not credentials_secret:
-        raise ValueError("GOOGLE_APPLICATION_CREDENTIALS environment variable is required")
-    
-    client = None
-    temp_creds_file = None
-    
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+LOG = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# 1. Load the service-account JSON safely
+# ---------------------------------------------------------------------------
+def _load_sa_json() -> Dict:
+    raw_val: Optional[str] = os.getenv("GS_API_KEY")
+    if raw_val is None:
+        raise RuntimeError("GS_API_KEY is not set")
+
+    # A. GS_API_KEY already contains raw JSON
+    if raw_val.lstrip().startswith("{"):
+        return json.loads(raw_val)
+
+    # B. Base-64-encoded JSON
     try:
-        print(f"Connecting to Google Cloud Storage...")
-        print(f"Bucket: {bucket_name}")
-        print(f"Folder path: {folder_path}")
-        print(f"File format: {file_format}")
-        print("-" * 50)
-        
-        # Get credentials from secret (assuming it contains the JSON content)
-        credentials_json = os.getenv(credentials_secret)
-        if not credentials_json:
-            raise ValueError(f"Credentials not found in secret: {credentials_secret}")
-        
-        # Parse credentials JSON
-        try:
-            credentials_dict = json.loads(credentials_json)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in credentials: {e}")
-        
-        # Create credentials object
-        credentials = service_account.Credentials.from_service_account_info(credentials_dict)
-        
-        # Initialize Google Cloud Storage client
-        client = storage.Client(credentials=credentials)
-        
-        # Get the bucket
-        bucket = client.bucket(bucket_name)
-        
-        # Check if bucket exists
-        if not bucket.exists():
-            raise ValueError(f"Bucket '{bucket_name}' does not exist or is not accessible")
-        
-        print(f"Successfully connected to bucket: {bucket_name}")
-        
-        # List blobs in the specified folder with the specified format
-        prefix = folder_path if folder_path and not folder_path.endswith('/') else folder_path
-        blobs = list(bucket.list_blobs(prefix=prefix))
-        
-        # Filter blobs by file format if specified
-        if file_format and file_format.lower() != 'none':
-            filtered_blobs = [blob for blob in blobs if blob.name.lower().endswith(f'.{file_format.lower()}')]
-        else:
-            filtered_blobs = blobs
-        
-        if not filtered_blobs:
-            print(f"No files found in bucket '{bucket_name}' with prefix '{prefix}' and format '{file_format}'")
-            return
-        
-        print(f"Found {len(filtered_blobs)} files. Reading sample data from first file...")
-        print("-" * 50)
-        
-        # Read sample data from the first file
-        first_blob = filtered_blobs[0]
-        print(f"Reading from file: {first_blob.name}")
-        print(f"File size: {first_blob.size} bytes")
-        print(f"Content type: {first_blob.content_type}")
-        print("-" * 30)
-        
-        # Download and read file content
-        file_content = first_blob.download_as_text()
-        
-        # Split content into lines for sampling
-        lines = file_content.strip().split('\n')
-        
-        # Print up to 10 sample lines
-        sample_count = min(10, len(lines))
-        print(f"Sample data ({sample_count} lines):")
-        print("-" * 30)
-        
-        for i in range(sample_count):
-            print(f"Line {i+1}: {lines[i]}")
-        
-        if len(lines) > 10:
-            print(f"... and {len(lines) - 10} more lines")
-        
-        print("-" * 50)
-        print(f"Connection test completed successfully!")
-        print(f"Total files available: {len(filtered_blobs)}")
-        print(f"Total lines in first file: {len(lines)}")
-        
-    except Exception as e:
-        print(f"Error during connection test: {str(e)}")
-        raise
-    
-    finally:
-        # Cleanup
-        if temp_creds_file and os.path.exists(temp_creds_file):
-            os.unlink(temp_creds_file)
-        
-        # Note: Google Cloud Storage client doesn't require explicit connection closing
+        decoded = base64.b64decode(raw_val).decode()
+        if decoded.lstrip().startswith("{"):
+            return json.loads(decoded)
+    except Exception:
+        pass
 
+    # C. Pointer to another env-var
+    pointed = os.getenv(raw_val)
+    if pointed is None:
+        raise RuntimeError(f"Pointer env-var '{raw_val}' is unset or empty")
+
+    try:
+        return json.loads(pointed)
+    except json.JSONDecodeError:
+        return json.loads(pointed.replace("\\n", "\n"))
+
+
+# ---------------------------------------------------------------------------
+# 2. Build an authenticated Storage client
+# ---------------------------------------------------------------------------
+def gcs_client() -> storage.Client:
+    sa_info = _load_sa_json()
+    creds   = service_account.Credentials.from_service_account_info(sa_info)
+    project = os.getenv("GS_PROJECT_ID", sa_info.get("project_id"))
+    client  = storage.Client(project=project, credentials=creds)
+    LOG.info("✓ GCS client initialised for project %s", project)
+    return client
+
+
+# ---------------------------------------------------------------------------
+# 3. Prefix helper
+# ---------------------------------------------------------------------------
+def _prefix() -> Optional[str]:
+    path = os.getenv("GS_FOLDER_PATH", "").strip("/")
+    return None if path == "" else f"{path}/"
+
+
+# ---------------------------------------------------------------------------
+# 4. Smoke-test: list CSVs and preview first 100 rows
+# ---------------------------------------------------------------------------
+def smoke_test(max_rows: int = 100) -> None:
+    bucket_name = os.getenv("GS_BUCKET")
+    if not bucket_name:
+        raise RuntimeError("GS_BUCKET must be set")
+
+    client = gcs_client()
+    bucket = client.bucket(bucket_name)
+
+    blobs = [
+        b for b in bucket.list_blobs(prefix=_prefix())
+        if b.name.lower().endswith(".csv")
+    ]
+
+    if not blobs:
+        LOG.warning("No CSV files under gs://%s/%s",
+                    bucket_name, (os.getenv('GS_FOLDER_PATH') or ''))
+        return
+
+    blob = blobs[0]
+    LOG.info("Found %d CSVs. Previewing %s (%d bytes)",
+             len(blobs), blob.name, blob.size)
+
+    # Download entire file as text (UTF-8)
+    data = blob.download_as_text()
+
+    # Parse CSV and print up to `max_rows` rows
+    reader = csv.reader(StringIO(data))
+    headers = next(reader, None)
+    print("—" * 60)
+    print(f"Columns: {headers}")
+    print(f"Showing first {max_rows} rows\n")
+
+    for idx, row in enumerate(reader, 1):
+        if idx > max_rows:
+            break
+        print(f"{idx:>3}: {row}")
+    print("—" * 60)
+
+
+# ---------------------------------------------------------------------------
+# 5. Entry-point
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    test_google_storage_connection()
+    smoke_test()
