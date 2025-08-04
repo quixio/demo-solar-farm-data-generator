@@ -63,7 +63,9 @@ variables:
     inputType: FreeText
     defaultValue: questdb-consumer
   - name: input
-    inputType: FreeText
+    inputType: InputTopic
+    multiline: false
+    defaultValue: solar-data
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
