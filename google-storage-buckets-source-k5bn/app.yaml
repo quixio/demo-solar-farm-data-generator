@@ -1,40 +1,33 @@
 name: google-storage-buckets-source-draft-k5bn
 language: python
 variables:
-  - name: output
-    inputType: OutputTopic
-    description: Name of the output topic to write into
-    defaultValue: s3-data
-    required: true
-  - name: S3_BUCKET
+  - name: GS_FILE_FORMAT
     inputType: FreeText
-    description: The URI or URL to your S3 bucket
+    defaultValue: csv
     required: true
-  - name: S3_REGION
+  - name: GS_BUCKET
     inputType: FreeText
-    description: The region of your S3 bucket
+    defaultValue: quix-workflow
     required: true
-  - name: S3_SECRET
+  - name: GS_API_KEY
     inputType: Secret
-    description: Your AWS secret
+    defaultValue: GCLOUD_PK_JSON
     required: true
-  - name: S3_ACCESS_KEY_ID
-    inputType: Secret
-    description: Your AWS Access Key
-    required: true
-  - name: S3_FOLDER_PATH
+  - name: GS_PROJECT_ID
     inputType: FreeText
-    description: The path to the S3 folder to consume
+    defaultValue: quix-testing-365012
     required: true
-  - name: S3_FILE_FORMAT
+  - name: GS_FOLDER_PATH
     inputType: FreeText
-    description: The file format of the files
-    defaultValue: json
+    defaultValue: /
     required: true
-  - name: S3_FILE_COMPRESSION
+  - name: GS_REGION
     inputType: FreeText
-    description: The type of file compression used for the files
-    defaultValue: gzip
+    defaultValue: us-central1
+    required: true
+  - name: GS_FILE_COMPRESSION
+    inputType: FreeText
+    defaultValue: none
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
