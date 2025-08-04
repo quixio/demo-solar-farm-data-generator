@@ -1,53 +1,67 @@
 name: questdb-sink-draft-bd78
 language: python
 variables:
-  - name: input
+  - name: QUESTDB_INPUT_TOPIC
     inputType: InputTopic
-    description: This is the input topic
-    defaultValue: input-data
+    defaultValue: solar-data
     required: true
-  - name: INFLUXDB_HOST
+  - name: QUESTDB_HOST
     inputType: FreeText
-    description: Host address for the InfluxDB instance.
-    defaultValue: http://influxdb3:80
+    defaultValue: questdb
     required: true
-  - name: INFLUXDB_TOKEN
+  - name: QUESTDB_AUTH_KEY
     inputType: Secret
-    description: Authentication token to access InfluxDB.
+    defaultValue: QUESTDB_PW
     required: true
-  - name: INFLUXDB_ORG
+  - name: QUESTDB_DATABASE
     inputType: FreeText
-    description: Organization name in InfluxDB.
-  - name: INFLUXDB_MEASUREMENT_NAME
+    defaultValue: qdb
+    required: true
+  - name: QUESTDB_TABLE_NAME
     inputType: FreeText
-    description: The InfluxDB measurement to write data to. If not specified, the name of the input topic will be used
     defaultValue: measurement1
-  - name: INFLUXDB_DATABASE
-    inputType: FreeText
-    description: Database name in InfluxDB where data should be stored.
     required: true
-  - name: INFLUXDB_TAG_KEYS
+  - name: QUESTDB_CONSUMER_GROUP_NAME
     inputType: FreeText
-    description: 'The tags to include when writing the measurement data. Example: Tag1,Tag2'
-  - name: INFLUXDB_FIELD_KEYS
-    inputType: FreeText
-    description: 'The fields to include when writing the measurement data. Example: Field1,Field2'
-  - name: CONSUMER_GROUP_NAME
-    inputType: FreeText
-    description: The name of the consumer group to use when consuming from Kafka
-    defaultValue: influxdb-sink
+    defaultValue: questdb-consumer-group
     required: true
-  - name: TIMESTAMP_COLUMN
+  - name: QUESTDB_TIMESTAMP_COLUMN
     inputType: FreeText
-    description: 'The column containing the timestamp column. NOTE: Must be nanoseconds'
+    defaultValue: timestamp_ns
+    required: true
+  - name: QUESTDB_BUFFER_SIZE
+    inputType: FreeText
+    defaultValue: 1000
+    required: true
+  - name: QUESTDB_BUFFER_TIMEOUT
+    inputType: FreeText
+    defaultValue: 1
+    required: true
+  - name: QUESTDB_PORT
+    inputType: FreeText
+    defaultValue: 8812
+    required: true
+  - name: QUESTDB_PASSWORD
+    inputType: Secret
+    defaultValue: admin
+    required: true
+  - name: QUESTDB_USER
+    inputType: FreeText
+    defaultValue: admin
+    required: true
   - name: BUFFER_SIZE
     inputType: FreeText
-    description: The number of records that sink holds before flush data to the InfluxDb
     defaultValue: 1000
-  - name: BUFFER_TIMEOUT
+  - name: QUESTDB_USERNAME
     inputType: FreeText
-    description: The number of seconds that sink holds before flush data to the InfluxDb
+  - name: BUFFER_DELAY
+    inputType: FreeText
     defaultValue: 1
+  - name: CONSUMER_GROUP_NAME
+    inputType: FreeText
+    defaultValue: questdb-consumer
+  - name: input
+    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
