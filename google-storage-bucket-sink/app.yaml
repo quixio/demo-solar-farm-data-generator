@@ -1,0 +1,32 @@
+name: google-storage-bucket-sink-draft
+language: python
+variables:
+  - name: input
+    inputType: InputTopic
+    description: This is the input topic
+    defaultValue: input
+    required: true
+  - name: AWS_S3_URI
+    inputType: FreeText
+    description: The URI or URL to your S3 bucket
+    required: true
+  - name: AWS_REGION
+    inputType: FreeText
+    description: The region of your S3 bucket
+    required: true
+  - name: AWS_SECRET_ACCESS_KEY
+    inputType: Secret
+    description: Your AWS secret
+    required: true
+  - name: AWS_ACCESS_KEY_ID
+    inputType: Secret
+    description: Your AWS Access Key
+    required: true
+  - name: table_name
+    inputType: FreeText
+    description: The table to publish data to
+    required: true
+dockerfile: dockerfile
+runEntryPoint: main.py
+defaultFile: main.py
+libraryItemId: s3-iceberg-destination
