@@ -13,20 +13,16 @@ variables:
     inputType: FreeText
     defaultValue: quix-testing-365012
     required: true
-  - name: GS_API_KEY
+  - name: GS_SECRET_KEY
     inputType: Secret
-    multiline: false
     defaultValue: GCLOUD_PK_JSON
     required: true
   - name: GS_BUCKET
     inputType: FreeText
-    multiline: false
     defaultValue: quix-workflow
     required: true
   - name: GS_COMPRESSION
     inputType: FreeText
-    multiline: false
-    defaultValue: None
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
