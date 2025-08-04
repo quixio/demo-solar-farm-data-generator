@@ -1,110 +1,240 @@
-# DEPENDENCIES:
-# pip install google-cloud-storage
-# pip install python-dotenv
-# END_DEPENDENCIES
-
 import os
 import json
+import time
+import logging
 from google.cloud import storage
 from google.oauth2 import service_account
-from dotenv import load_dotenv
+from quixstreams import Application
+from quixstreams.sources.base import Source
 
-# Load environment variables
-load_dotenv()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def test_google_storage_connection():
-    try:
-        # Get credentials from environment variable
-        credentials_json = os.environ.get('GS_SECRET_KEY')
-        if not credentials_json:
-            raise ValueError("GS_SECRET_KEY environment variable not found")
-        
-        # Parse the JSON credentials
-        credentials_info = json.loads(credentials_json)
-        credentials = service_account.Credentials.from_service_account_info(credentials_info)
-        
-        # Get other configuration from environment variables
-        bucket_name = os.environ.get('GS_BUCKET')
-        project_id = os.environ.get('GS_PROJECT_ID')
-        folder_path = os.environ.get('GS_FOLDER_PATH', '/')
-        file_format = os.environ.get('GS_FILE_FORMAT', 'csv')
-        
-        if not bucket_name:
-            raise ValueError("GS_BUCKET environment variable not found")
-        if not project_id:
-            raise ValueError("GS_PROJECT_ID environment variable not found")
-        
-        print(f"Connecting to Google Storage bucket: {bucket_name}")
-        print(f"Project ID: {project_id}")
-        print(f"Folder path: {folder_path}")
-        print(f"Expected file format: {file_format}")
-        print("-" * 50)
-        
-        # Initialize the Google Cloud Storage client
-        client = storage.Client(project=project_id, credentials=credentials)
-        bucket = client.bucket(bucket_name)
-        
-        # Clean up folder path for prefix search
-        prefix = folder_path.strip('/')
-        if prefix and not prefix.endswith('/'):
-            prefix += '/'
-        
-        # List blobs with the specified prefix
-        blobs = list(bucket.list_blobs(prefix=prefix if prefix != '/' else ''))
-        
-        if not blobs:
-            print("No files found in the specified folder path")
-            return
-        
-        print(f"Found {len(blobs)} total files in bucket")
-        print("Reading first 10 files:")
-        print("-" * 50)
-        
-        count = 0
-        for blob in blobs:
-            if count >= 10:
-                break
-                
-            # Skip directories (blobs ending with '/')
-            if blob.name.endswith('/'):
-                continue
-                
-            try:
-                print(f"\nFile {count + 1}: {blob.name}")
-                print(f"Size: {blob.size} bytes")
-                print(f"Content Type: {blob.content_type}")
-                print(f"Created: {blob.time_created}")
-                
-                # Download and display content preview (first 500 characters)
-                if blob.size and blob.size > 0:
-                    content = blob.download_as_text(encoding='utf-8')
-                    preview = content[:500] if len(content) > 500 else content
-                    print(f"Content preview:\n{preview}")
-                    if len(content) > 500:
-                        print("... (truncated)")
-                else:
-                    print("File is empty")
-                
-                print("-" * 30)
-                count += 1
-                
-            except Exception as e:
-                print(f"Error reading file {blob.name}: {str(e)}")
-                print("-" * 30)
-                count += 1
-                continue
-        
-        if count == 0:
-            print("No readable files found (all files may be directories or empty)")
-        else:
-            print(f"\nSuccessfully read {count} files from Google Storage bucket")
+class GoogleStorageSource(Source):
+    def __init__(self, bucket_name, project_id, credentials_json, folder_path="/", file_format="csv", compression="none", **kwargs):
+        super().__init__(**kwargs)
+        self.bucket_name = bucket_name
+        self.project_id = project_id
+        self.credentials_json = credentials_json
+        self.folder_path = folder_path
+        self.file_format = file_format
+        self.compression = compression
+        self.client = None
+        self.bucket = None
+        self.processed_count = 0
+        self.max_messages = 100
+
+    def setup(self):
+        try:
+            credentials_info = json.loads(self.credentials_json)
+            credentials = service_account.Credentials.from_service_account_info(credentials_info)
+            self.client = storage.Client(project=self.project_id, credentials=credentials)
+            self.bucket = self.client.bucket(self.bucket_name)
             
-    except json.JSONDecodeError:
-        print("Error: Invalid JSON format in GS_SECRET_KEY")
-    except Exception as e:
-        print(f"Connection test failed: {str(e)}")
-    finally:
-        print("\nConnection test completed")
+            # Test connection
+            self.bucket.exists()
+            logger.info(f"Successfully connected to Google Storage bucket: {self.bucket_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to connect to Google Storage: {str(e)}")
+            return False
+
+    def run(self):
+        if not self.setup():
+            logger.error("Failed to setup Google Storage connection")
+            return
+
+        try:
+            # Clean up folder path for prefix search
+            prefix = self.folder_path.strip('/')
+            if prefix and not prefix.endswith('/'):
+                prefix += '/'
+            
+            # List all blobs with the specified prefix
+            blobs = list(self.bucket.list_blobs(prefix=prefix if prefix != '/' else ''))
+            
+            if not blobs:
+                logger.warning("No files found in the specified folder path")
+                return
+
+            logger.info(f"Found {len(blobs)} files in bucket")
+
+            for blob in blobs:
+                if not self.running or self.processed_count >= self.max_messages:
+                    break
+
+                # Skip directories
+                if blob.name.endswith('/'):
+                    continue
+
+                try:
+                    # Read file content
+                    if blob.size and blob.size > 0:
+                        content = blob.download_as_text(encoding='utf-8')
+                        
+                        # Process content based on file format
+                        if self.file_format.lower() == 'csv':
+                            lines = content.strip().split('\n')
+                            for i, line in enumerate(lines):
+                                if not self.running or self.processed_count >= self.max_messages:
+                                    break
+                                
+                                # Skip empty lines
+                                if not line.strip():
+                                    continue
+                                
+                                # Create message
+                                message_data = {
+                                    'file_name': blob.name,
+                                    'file_size': blob.size,
+                                    'line_number': i + 1,
+                                    'content': line.strip(),
+                                    'timestamp': time.time(),
+                                    'bucket': self.bucket_name,
+                                    'folder_path': self.folder_path
+                                }
+                                
+                                # Serialize and produce message
+                                msg = self.serialize(
+                                    key=f"{blob.name}_{i+1}",
+                                    value=message_data
+                                )
+                                
+                                self.produce(
+                                    key=msg.key,
+                                    value=msg.value
+                                )
+                                
+                                self.processed_count += 1
+                                logger.info(f"Processed message {self.processed_count} from file: {blob.name}")
+                                
+                                # Small delay to prevent overwhelming
+                                time.sleep(0.1)
+                        
+                        elif self.file_format.lower() == 'json':
+                            try:
+                                json_data = json.loads(content)
+                                message_data = {
+                                    'file_name': blob.name,
+                                    'file_size': blob.size,
+                                    'content': json_data,
+                                    'timestamp': time.time(),
+                                    'bucket': self.bucket_name,
+                                    'folder_path': self.folder_path
+                                }
+                                
+                                msg = self.serialize(
+                                    key=blob.name,
+                                    value=message_data
+                                )
+                                
+                                self.produce(
+                                    key=msg.key,
+                                    value=msg.value
+                                )
+                                
+                                self.processed_count += 1
+                                logger.info(f"Processed JSON message from file: {blob.name}")
+                            except json.JSONDecodeError as e:
+                                logger.error(f"Failed to parse JSON from file {blob.name}: {str(e)}")
+                        
+                        else:
+                            # Handle other formats as plain text
+                            message_data = {
+                                'file_name': blob.name,
+                                'file_size': blob.size,
+                                'content': content,
+                                'timestamp': time.time(),
+                                'bucket': self.bucket_name,
+                                'folder_path': self.folder_path,
+                                'format': self.file_format
+                            }
+                            
+                            msg = self.serialize(
+                                key=blob.name,
+                                value=message_data
+                            )
+                            
+                            self.produce(
+                                key=msg.key,
+                                value=msg.value
+                            )
+                            
+                            self.processed_count += 1
+                            logger.info(f"Processed message from file: {blob.name}")
+                    
+                    else:
+                        logger.warning(f"Skipping empty file: {blob.name}")
+
+                except Exception as e:
+                    logger.error(f"Error processing file {blob.name}: {str(e)}")
+                    continue
+
+            logger.info(f"Completed processing. Total messages processed: {self.processed_count}")
+
+        except Exception as e:
+            logger.error(f"Error during processing: {str(e)}")
+        finally:
+            self.cleanup()
+
+    def cleanup(self):
+        if self.client:
+            self.client.close()
+            logger.info("Google Storage client connection closed")
+
+    def default_topic(self):
+        return f"source__{self.bucket_name}_{self.folder_path.replace('/', '_')}"
+
+def main():
+    # Get configuration from environment variables
+    bucket_name = os.environ.get('GS_BUCKET')
+    project_id = os.environ.get('GS_PROJECT_ID')
+    credentials_json = os.environ.get('GS_SECRET_KEY')
+    folder_path = os.environ.get('GS_FOLDER_PATH', '/')
+    file_format = os.environ.get('GS_FILE_FORMAT', 'csv')
+    compression = os.environ.get('GS_FILE_COMPRESSION', 'none')
+    output_topic_name = os.environ.get('output', 'output')
+
+    # Validate required environment variables
+    if not bucket_name:
+        raise ValueError("GS_BUCKET environment variable is required")
+    if not project_id:
+        raise ValueError("GS_PROJECT_ID environment variable is required")
+    if not credentials_json:
+        raise ValueError("GS_SECRET_KEY environment variable is required")
+
+    # Create Quix Streams application
+    app = Application()
+
+    # Create output topic
+    output_topic = app.topic(output_topic_name)
+
+    # Create Google Storage source
+    source = GoogleStorageSource(
+        name="google-storage-source",
+        bucket_name=bucket_name,
+        project_id=project_id,
+        credentials_json=credentials_json,
+        folder_path=folder_path,
+        file_format=file_format,
+        compression=compression
+    )
+
+    # Create streaming dataframe
+    sdf = app.dataframe(topic=output_topic, source=source)
+    
+    # Print messages for debugging
+    sdf.print(metadata=True)
+
+    logger.info(f"Starting Google Storage source application")
+    logger.info(f"Bucket: {bucket_name}")
+    logger.info(f"Project ID: {project_id}")
+    logger.info(f"Folder path: {folder_path}")
+    logger.info(f"File format: {file_format}")
+    logger.info(f"Output topic: {output_topic_name}")
+
+    # Run the application
+    app.run()
 
 if __name__ == "__main__":
-    test_google_storage_connection()
+    main()
