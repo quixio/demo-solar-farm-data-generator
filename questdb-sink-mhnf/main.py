@@ -1,9 +1,9 @@
 import os
 import json
+import psycopg2
 from datetime import datetime
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch
-import psycopg2
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,16 +12,19 @@ class QuestDBSink(BatchingSink):
     def __init__(self, host, port, database, user, password, table_name):
         super().__init__()
         self.host = host
-        self.port = port
+        try:
+            self.port = int(port) if port else 8812
+        except (ValueError, TypeError):
+            self.port = 8812
         self.database = database
         self.user = user
         self.password = password
         self.table_name = table_name
         self.connection = None
-        self.table_created = False
+        self.table_columns = set()
 
     def setup(self):
-        """Establish connection to QuestDB"""
+        """Establish connection to QuestDB and cache table columns"""
         try:
             self.connection = psycopg2.connect(
                 host=self.host,
@@ -32,29 +35,45 @@ class QuestDBSink(BatchingSink):
             )
             self.connection.autocommit = True
             print(f"Connected to QuestDB at {self.host}:{self.port}")
+            self._cache_table_columns()
         except Exception as e:
             print(f"Failed to connect to QuestDB: {e}")
             raise
 
-    def _create_table_if_not_exists(self):
-        """Create table if it doesn't exist"""
-        if self.table_created:
-            return
-            
+    def _cache_table_columns(self):
+        """
+        Read column names that already exist in self.table_name
+        and cache them in self.table_columns.
+        """
         cursor = self.connection.cursor()
         try:
-            # Create table with basic schema - will be expanded as needed
+            # QuestDB helper function table_columns
+            cursor.execute(
+                "SELECT column_name FROM table_columns(%s)",
+                (self.table_name,)
+            )
+            self.table_columns = {row[0] for row in cursor.fetchall()}
+            if not self.table_columns:
+                # Table does not exist yet – create it and cache again
+                self._create_table_if_not_exists()
+                self._cache_table_columns()
+        finally:
+            cursor.close()
+
+    def _create_table_if_not_exists(self):
+        """Create the table with basic schema if it doesn't exist"""
+        cursor = self.connection.cursor()
+        try:
             create_table_sql = f"""
             CREATE TABLE IF NOT EXISTS {self.table_name} (
                 timestamp TIMESTAMP,
                 temperature DOUBLE,
                 humidity DOUBLE,
                 pressure DOUBLE
-            ) timestamp(timestamp) PARTITION BY DAY WAL;
+            ) TIMESTAMP(timestamp) PARTITION BY DAY
             """
             cursor.execute(create_table_sql)
             self.connection.commit()
-            self.table_created = True
             print(f"Table {self.table_name} created or already exists")
         except Exception as e:
             print(f"Error creating table: {e}")
@@ -62,89 +81,71 @@ class QuestDBSink(BatchingSink):
         finally:
             cursor.close()
 
-    @staticmethod
-    def _to_datetime(ts_int: int) -> datetime:
-        """
-        Convert epoch value (seconds, micro- or nano-seconds) to UTC datetime.
-        """
-        # If the number is larger than the maximum second value that fits
-        # into year 9999 (~2.5e11) we assume it is micro- or nano-seconds.
-        if ts_int > 253402300799:               # > 9999-12-31 in seconds
-            # nanoseconds have 1e9 multiplier, microseconds 1e6
-            if ts_int > 1e14:                   # clearly nanoseconds
-                ts_int /= 1_000_000_000
-            else:                               # treat as microseconds
-                ts_int /= 1_000_000
-        return datetime.utcfromtimestamp(ts_int)
-
     def write(self, batch: SinkBatch):
         """Write batch of records to QuestDB"""
-        if not self.connection:
-            self.setup()
-        
-        self._create_table_if_not_exists()
-        
+        if not batch:
+            return
+
         cursor = self.connection.cursor()
-        records_to_insert = []
-        
         try:
+            records_to_insert = []
+            
             for item in batch:
-                try:
-                    print(f'Raw message: {item}')
-                    
-                    # Extract the message value
-                    message_data = item.value if hasattr(item, 'value') else item
-                    
-                    # If message_data is a string, parse it as JSON
-                    if isinstance(message_data, str):
-                        message_data = json.loads(message_data)
-                    
-                    # Build record for insertion
-                    record = {}
-                    
-                    # Process each field in the message
-                    for key, value in message_data.items():
-                        if key.lower() not in ['timestamp', 'time', 'ts']:
-                            record[key] = value
-                        else:
-                            # value can be seconds, µs, or ns – normalise it
-                            if isinstance(value, (int, float)):
-                                record['timestamp'] = self._to_datetime(int(value))
-                            else:
-                                # assume ISO-8601 or RFC-2822 string
-                                record['timestamp'] = datetime.fromisoformat(value)
-                    
-                    # Ensure we have a timestamp
-                    if 'timestamp' not in record:
-                        record['timestamp'] = datetime.utcnow()
-                    
-                    records_to_insert.append(record)
-                    
-                except Exception as e:
-                    print(f"Error processing item: {e}")
-                    continue
-            
-            if records_to_insert:
-                # Get all unique columns from all records
-                all_columns = set()
-                for record in records_to_insert:
-                    all_columns.update(record.keys())
+                print(f'Raw message: {item}')
                 
-                # Prepare insert statement
-                columns = list(all_columns)
-                placeholders = ', '.join(['%s'] * len(columns))
-                insert_sql = f"INSERT INTO {self.table_name} ({', '.join(columns)}) VALUES ({placeholders})"
+                # Get the record data - check if it's directly in item or nested
+                if hasattr(item, 'value') and item.value:
+                    record = item.value if isinstance(item.value, dict) else json.loads(item.value)
+                else:
+                    # Try to get data directly from item
+                    record = item if isinstance(item, dict) else {}
                 
-                # Prepare data for bulk insert
-                data_to_insert = []
-                for record in records_to_insert:
-                    row = [record.get(col) for col in columns]
-                    data_to_insert.append(row)
-                
-                # Execute bulk insert
-                cursor.executemany(insert_sql, data_to_insert)
-                print(f"Successfully inserted {len(records_to_insert)} records into {self.table_name}")
-            
+                # Convert timestamp if present
+                if 'timestamp' in record:
+                    if isinstance(record['timestamp'], (int, float)):
+                        # Convert epoch timestamp to datetime
+                        record['timestamp'] = datetime.fromtimestamp(record['timestamp'] / 1000.0 if record['timestamp'] > 1e10 else record['timestamp'])
+                    elif isinstance(record['timestamp'], str):
+                        try:
+                            record['timestamp'] = datetime.fromisoformat(record['timestamp'].replace('Z', '+00:00'))
+                        except:
+                            record['timestamp'] = datetime.now()
+                else:
+                    record['timestamp'] = datetime.now()
+
+                # Strip fields that are NOT in the table
+                filtered = {k: v for k, v in record.items() 
+                           if k in self.table_columns}
+                # Always keep timestamp
+                filtered['timestamp'] = record['timestamp']
+                records_to_insert.append(filtered)
+
+            if not records_to_insert:
+                return
+
+            # Build insert only with allowed columns
+            columns = [col for col in self.table_columns if col != 'timestamp']
+            columns.insert(0, 'timestamp')  # make timestamp first
+            placeholders = ', '.join(['%s'] * len(columns))
+            insert_sql = (f"INSERT INTO {self.table_name} "
+                         f"({', '.join(columns)}) VALUES ({placeholders})")
+
+            # Prepare values for insertion
+            values_to_insert = []
+            for record in records_to_insert:
+                row_values = []
+                for col in columns:
+                    value = record.get(col)
+                    if value is not None:
+                        row_values.append(value)
+                    else:
+                        row_values.append(None)
+                values_to_insert.append(tuple(row_values))
+
+            if values_to_insert:
+                cursor.executemany(insert_sql, values_to_insert)
+                print(f"Inserted {len(values_to_insert)} records into {self.table_name}")
+
         except Exception as e:
             print(f"Error writing to QuestDB: {e}")
             raise
@@ -152,42 +153,32 @@ class QuestDBSink(BatchingSink):
             cursor.close()
 
     def teardown(self):
-        """Close connection to QuestDB"""
+        """Clean up database connection"""
         if self.connection:
             self.connection.close()
             print("QuestDB connection closed")
 
-# Initialize application
+# Create the QuestDB sink
+questdb_sink = QuestDBSink(
+    host=os.environ.get('QUESTDB_HOST'),
+    port=os.environ.get('QUESTDB_PORT'),
+    database=os.environ.get('QUESTDB_DATABASE'),
+    user=os.environ.get('QUESTDB_USER'),
+    password=os.environ.get('QUESTDB_PASSWORD_KEY'),
+    table_name=os.environ.get('QUESTDB_TABLE_NAME')
+)
+
 app = Application(
     consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "questdb-sink"),
     auto_offset_reset="earliest",
-    commit_every=int(os.environ.get("BUFFER_SIZE", "1000")) if os.environ.get("BUFFER_SIZE", "1000").isdigit() else 1000,
-    commit_interval=float(os.environ.get("BUFFER_TIMEOUT", "1.0")) if os.environ.get("BUFFER_TIMEOUT", "1.0").replace(".", "").isdigit() else 1.0,
+    commit_every=int(os.environ.get("BUFFER_SIZE", "1000")),
+    commit_interval=float(os.environ.get("BUFFER_TIMEOUT", "1.0")),
 )
 
-# Configure input topic
-input_topic = app.topic(os.environ.get("QUESTDB_INPUT_TOPIC"))
+input_topic = app.topic(os.environ.get('QUESTDB_INPUT_TOPIC'))
 
-# Handle port with try/except
-try:
-    port = int(os.environ.get('QUESTDB_PORT', '8812'))
-except ValueError:
-    port = 8812
-
-# Initialize QuestDB sink
-questdb_sink = QuestDBSink(
-    host=os.environ.get('QUESTDB_HOST', 'localhost'),
-    port=port,
-    database=os.environ.get('QUESTDB_DATABASE', 'qdb'),
-    user=os.environ.get('QUESTDB_USER', 'admin'),
-    password=os.environ.get('QUESTDB_PASSWORD_KEY', ''),
-    table_name=os.environ.get('QUESTDB_TABLE_NAME', 'sensor_data')
-)
-
-# Create streaming dataframe and sink data
 sdf = app.dataframe(input_topic)
 sdf.sink(questdb_sink)
 
 if __name__ == "__main__":
-    # Process only 10 messages then stop
     app.run(count=10, timeout=20)
