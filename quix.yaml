@@ -383,6 +383,55 @@ deployments:
         inputType: FreeText
         required: true
         value: 1
+  - name: QuestDB-deployment-hlmb
+    application: questdb-sink-mhnf
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 200
+      memory: 500
+      replicas: 1
+    variables:
+      - name: QUESTDB_USER
+        inputType: FreeText
+        required: true
+        value: admin
+      - name: QUESTDB_INPUT_TOPIC
+        inputType: InputTopic
+        required: true
+        value: solar-data
+      - name: BUFFER_SIZE
+        inputType: FreeText
+        required: true
+        value: 1000
+      - name: QUESTDB_HOST
+        inputType: FreeText
+        required: true
+        value: questdb
+      - name: BUFFER_TIMEOUT
+        inputType: FreeText
+        required: true
+        value: 1
+      - name: QUESTDB_DATABASE
+        inputType: FreeText
+        required: true
+        value: qdb
+      - name: QUESTDB_TABLE_NAME
+        inputType: FreeText
+        required: true
+        value: data_sink_8mct
+      - name: CONSUMER_GROUP_NAME
+        inputType: FreeText
+        required: true
+        value: questdb-consumer-group
+      - name: QUESTDB_PORT
+        inputType: FreeText
+        required: true
+        value: 8812
+      - name: QUESTDB_PASSWORD_KEY
+        inputType: Secret
+        required: true
+        secretKey: QUESTDB_PW
 
 # This section describes the Topics of the data pipeline
 topics:
