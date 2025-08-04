@@ -43,7 +43,8 @@ variables:
     required: true
   - name: QUESTDB_PASSWORD
     inputType: Secret
-    defaultValue: admin
+    multiline: false
+    defaultValue: QUESTDB_PW
     required: true
   - name: QUESTDB_USER
     inputType: FreeText
