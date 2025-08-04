@@ -46,8 +46,9 @@ variables:
     multiline: false
     defaultValue: QUESTDB_PW
     required: true
-  - name: QUESTDB_USER
+  - name: QUESTDB_USERNAME
     inputType: FreeText
+    multiline: false
     defaultValue: admin
     required: true
   - name: CONSUMER_GROUP_NAME
