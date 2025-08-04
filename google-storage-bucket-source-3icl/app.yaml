@@ -13,8 +13,9 @@ variables:
     inputType: FreeText
     defaultValue: us-central1
     required: true
-  - name: GS_SECRET_KEY
+  - name: GS_API_KEY
     inputType: Secret
+    multiline: false
     defaultValue: GCLOUD_PK_JSON
     required: true
   - name: GS_ACCESS_KEY_ID_KEY
