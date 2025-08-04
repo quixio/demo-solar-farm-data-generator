@@ -19,7 +19,7 @@ variables:
     required: true
   - name: GS_FOLDER_PATH
     inputType: FreeText
-    defaultValue: /
+    multiline: false
     required: true
   - name: GS_REGION
     inputType: FreeText
