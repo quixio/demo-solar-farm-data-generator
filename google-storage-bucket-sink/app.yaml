@@ -9,8 +9,9 @@ variables:
     inputType: FreeText
     defaultValue: quix-workflow
     required: true
-  - name: GS_SECRET_KEY
+  - name: GS_API_KEY
     inputType: Secret
+    multiline: false
     defaultValue: GCLOUD_PK_JSON
     required: true
   - name: GS_COMPRESSION
