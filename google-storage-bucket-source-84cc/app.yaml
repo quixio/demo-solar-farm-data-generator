@@ -1,26 +1,44 @@
 name: google-storage-bucket-source-draft-84cc
 language: python
 variables:
-  - name: GS_FILE_FORMAT
-    inputType: FreeText
-    defaultValue: csv
-    required: true
-  - name: GS_SECRET_KEY
-    inputType: Secret
-    defaultValue: GCLOUD_PK_JSON
-    required: true
-  - name: GS_PROJECT_ID
-    inputType: FreeText
-    defaultValue: quix-testing-365012
+  - name: output
+    inputType: OutputTopic
+    defaultValue: output
     required: true
   - name: GS_BUCKET
     inputType: FreeText
     defaultValue: quix-workflow
     required: true
+  - name: GS_REGION
+    inputType: FreeText
+    defaultValue: us-central1
+    required: true
+  - name: GS_SECRET_KEY
+    inputType: Secret
+    defaultValue: GCLOUD_PK_JSON
+    required: true
+  - name: GS_ACCESS_KEY_ID_KEY
+    inputType: Secret
+    defaultValue: GCLOUD_PK_JSON
+    required: true
   - name: GS_FOLDER_PATH
     inputType: FreeText
     defaultValue: /
     required: true
+  - name: GS_FILE_FORMAT
+    inputType: FreeText
+    defaultValue: csv
+    required: true
+  - name: GS_FILE_COMPRESSION
+    inputType: FreeText
+    defaultValue: none
+    required: true
+  - name: GS_PROJECT_ID
+    inputType: FreeText
+    defaultValue: quix-testing-365012
+    required: true
+  - name: Quix__Kafka__Broker__Address
+    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
