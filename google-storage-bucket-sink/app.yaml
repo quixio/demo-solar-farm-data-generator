@@ -15,6 +15,8 @@ variables:
     required: true
   - name: GS_COMPRESSION
     inputType: FreeText
+    multiline: false
+    description: None
     required: true
   - name: GS_PROJECT_ID
     inputType: FreeText
