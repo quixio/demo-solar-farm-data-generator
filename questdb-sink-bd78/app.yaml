@@ -62,6 +62,8 @@ variables:
   - name: CONSUMER_GROUP_NAME
     inputType: FreeText
     defaultValue: questdb-consumer
+  - name: input
+    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
