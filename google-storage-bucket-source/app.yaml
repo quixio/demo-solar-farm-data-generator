@@ -13,8 +13,9 @@ variables:
     inputType: FreeText
     defaultValue: quix-testing-365012
     required: true
-  - name: GS_SECRET_KEY
+  - name: GS_API_KEY
     inputType: Secret
+    multiline: false
     defaultValue: GCLOUD_PK_JSON
     required: true
   - name: GS_BUCKET
