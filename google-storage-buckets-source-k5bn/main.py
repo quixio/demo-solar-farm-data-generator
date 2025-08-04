@@ -1,154 +1,74 @@
-# DEPENDENCIES:
-# pip install google-cloud-storage
-# pip install pandas
-# END_DEPENDENCIES
-
+# pip install google-cloud-storage google-cloud-secret-manager
 import os
 import json
-from google.cloud import storage
-import pandas as pd
-from io import StringIO
-import sys
+import logging
+from google.cloud import secretmanager, storage
+from google.oauth2 import service_account
 
-def get_credentials():
-    """Get GCP credentials from environment variable."""
-    try:
-        # Get the secret name from environment variable
-        secret_name = os.getenv('GS_API_KEY')
-        if not secret_name:
-            raise ValueError("GS_API_KEY environment variable not set")
-        
-        # Read credentials from the secret (assuming it contains JSON)
-        credentials_json = os.getenv(secret_name)
-        if not credentials_json:
-            raise ValueError(f"Credentials not found in environment variable: {secret_name}")
-        
-        # Parse JSON credentials
-        credentials_dict = json.loads(credentials_json)
-        return credentials_dict
-    except Exception as e:
-        print(f"Error getting credentials: {e}")
-        raise
+log = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-def connect_to_gcs():
-    """Establish connection to Google Cloud Storage."""
-    try:
-        # Get credentials
-        credentials_dict = get_credentials()
-        
-        # Create client using credentials dictionary
-        client = storage.Client.from_service_account_info(credentials_dict)
-        
-        print("✓ Successfully connected to Google Cloud Storage")
-        return client
-    except Exception as e:
-        print(f"✗ Failed to connect to Google Cloud Storage: {e}")
-        raise
+# --------------------------------------------------------------------
+# 1. Fetch the service-account key JSON that lives in Secret Manager
+# --------------------------------------------------------------------
+def _fetch_key_from_secret_manager() -> dict:
+    """
+    Reads the latest version of the secret whose name is given in
+    the GS_API_KEY environment variable and returns it as a dict.
+    """
+    project_id = os.getenv("GS_PROJECT_ID")
+    secret_id  = os.getenv("GS_API_KEY")          # ← e.g. "GCLOUD_PK_JSON"
+    if not (project_id and secret_id):
+        raise RuntimeError("GS_PROJECT_ID and GS_API_KEY must be set")
 
-def list_and_read_files(client):
-    """List files in bucket and read sample data."""
-    try:
-        bucket_name = os.getenv('GS_BUCKET')
-        folder_path = os.getenv('GS_FOLDER_PATH', '/')
-        file_format = os.getenv('GS_FILE_FORMAT', 'csv')
-        
-        if not bucket_name:
-            raise ValueError("GS_BUCKET environment variable not set")
-        
-        # Get bucket
-        bucket = client.bucket(bucket_name)
-        print(f"✓ Connected to bucket: {bucket_name}")
-        
-        # Clean folder path
-        prefix = folder_path.strip('/') + '/' if folder_path != '/' else ''
-        
-        # List files with the specified format
-        blobs = list(bucket.list_blobs(prefix=prefix))
-        
-        # Filter files by format
-        target_files = []
-        for blob in blobs:
-            if blob.name.lower().endswith(f'.{file_format.lower()}'):
-                target_files.append(blob)
-        
-        if not target_files:
-            print(f"✗ No {file_format} files found in bucket {bucket_name} with prefix '{prefix}'")
-            return
-        
-        print(f"✓ Found {len(target_files)} {file_format} files")
-        
-        # Read sample data from the first file
-        sample_blob = target_files[0]
-        print(f"✓ Reading sample data from: {sample_blob.name}")
-        
-        # Download file content
-        file_content = sample_blob.download_as_text()
-        
-        # Parse based on file format
-        if file_format.lower() == 'csv':
-            # Read CSV data
-            df = pd.read_csv(StringIO(file_content))
-            
-            # Get first 10 rows
-            sample_rows = df.head(10)
-            
-            print(f"\n=== SAMPLE DATA (First 10 records from {sample_blob.name}) ===")
-            print(f"File size: {sample_blob.size} bytes")
-            print(f"Total rows in sample: {len(sample_rows)}")
-            print(f"Columns: {list(df.columns)}")
-            print("\nData:")
-            
-            for idx, row in sample_rows.iterrows():
-                print(f"Record {idx + 1}:")
-                for col in df.columns:
-                    print(f"  {col}: {row[col]}")
-                print()
-                
-        else:
-            # For non-CSV files, just show first 10 lines
-            lines = file_content.split('\n')
-            sample_lines = lines[:10]
-            
-            print(f"\n=== SAMPLE DATA (First 10 lines from {sample_blob.name}) ===")
-            print(f"File size: {sample_blob.size} bytes")
-            print(f"Total lines in file: {len(lines)}")
-            print("\nContent:")
-            
-            for idx, line in enumerate(sample_lines, 1):
-                if line.strip():  # Skip empty lines
-                    print(f"Line {idx}: {line}")
-                    
-    except Exception as e:
-        print(f"✗ Error reading files: {e}")
-        raise
+    client = secretmanager.SecretManagerServiceClient()              # :contentReference[oaicite:0]{index=0}
+    name   = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
+    payload = client.access_secret_version(request={"name": name}).payload.data.decode("utf-8")  # :contentReference[oaicite:1]{index=1}
+    log.info("✓ Retrieved service-account key from Secret Manager")
+    return json.loads(payload)
 
-def main():
-    """Main function to test Google Cloud Storage connection."""
-    print("=== Google Cloud Storage Connection Test ===")
-    print()
-    
-    try:
-        # Display configuration
-        print("Configuration:")
-        print(f"  Bucket: {os.getenv('GS_BUCKET')}")
-        print(f"  Region: {os.getenv('GS_REGION')}")
-        print(f"  Project ID: {os.getenv('GS_PROJECT_ID')}")
-        print(f"  Folder Path: {os.getenv('GS_FOLDER_PATH')}")
-        print(f"  File Format: {os.getenv('GS_FILE_FORMAT')}")
-        print(f"  Compression: {os.getenv('GS_FILE_COMPRESSION')}")
-        print()
-        
-        # Connect to GCS
-        client = connect_to_gcs()
-        
-        # List and read sample files
-        list_and_read_files(client)
-        
-        print("✓ Connection test completed successfully!")
-        
-    except Exception as e:
-        print(f"✗ Connection test failed: {e}")
-        sys.exit(1)
+# --------------------------------------------------------------------
+# 2. Build a credential object from that JSON
+# --------------------------------------------------------------------
+def _build_credentials() -> service_account.Credentials:
+    key_dict = _fetch_key_from_secret_manager()
+    creds    = service_account.Credentials.from_service_account_info(key_dict)   # :contentReference[oaicite:2]{index=2}
+    return creds
+
+# --------------------------------------------------------------------
+# 3. Make a Storage client that uses those credentials
+# --------------------------------------------------------------------
+def gcs_client() -> storage.Client:
+    """
+    Returns an authenticated google.cloud.storage.Client
+    """
+    creds  = _build_credentials()
+    proj   = os.getenv("GS_PROJECT_ID")
+    client = storage.Client(project=proj, credentials=creds)          # :contentReference[oaicite:3]{index=3}
+    log.info("✓ Connected to Google Cloud Storage")
+    return client
+
+# --------------------------------------------------------------------
+# 4. Example utility – list *.csv under a prefix and print a preview
+# --------------------------------------------------------------------
+def sample_list_and_preview():
+    bucket_name = os.getenv("GS_BUCKET")
+    prefix      = os.getenv("GS_FOLDER_PATH", "").lstrip("/") + "/"
+    if not bucket_name:
+        raise RuntimeError("GS_BUCKET must be set")
+
+    client = gcs_client()
+    bucket = client.bucket(bucket_name)
+    blobs  = [b for b in bucket.list_blobs(prefix=prefix)            # :contentReference[oaicite:4]{index=4}
+              if b.name.lower().endswith(".csv")]
+
+    if not blobs:
+        log.warning("No CSV files found under gs://%s/%s", bucket_name, prefix)
+        return
+
+    first = blobs[0]
+    log.info("✓ Previewing %s (%d bytes)", first.name, first.size)
+    print(first.download_as_text()[:500])                            # :contentReference[oaicite:5]{index=5}
 
 if __name__ == "__main__":
-    main()
+    sample_list_and_preview()
