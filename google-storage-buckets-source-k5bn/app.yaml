@@ -1,4 +1,4 @@
-name: google-storage-buckets-source-draft-k5bn
+name: google-storage-buckets-source-draft-working
 language: python
 variables:
   - name: GS_FILE_FORMAT
