@@ -1,6 +1,6 @@
 import os
-import json
 import psycopg2
+import json
 from datetime import datetime
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch
@@ -12,10 +12,7 @@ class QuestDBSink(BatchingSink):
     def __init__(self, host, port, database, user, password, table_name):
         super().__init__()
         self.host = host
-        try:
-            self.port = int(port) if port else 8812
-        except (ValueError, TypeError):
-            self.port = 8812
+        self.port = port
         self.database = database
         self.user = user
         self.password = password
@@ -24,21 +21,45 @@ class QuestDBSink(BatchingSink):
         self.table_columns = set()
 
     def setup(self):
-        """Establish connection to QuestDB and cache table columns"""
+        """Establish connection to QuestDB and guarantee the table exists."""
         try:
             self.connection = psycopg2.connect(
                 host=self.host,
                 port=self.port,
                 database=self.database,
                 user=self.user,
-                password=self.password
+                password=self.password,
             )
             self.connection.autocommit = True
             print(f"Connected to QuestDB at {self.host}:{self.port}")
+
+            # Create the table first (no harm if it already exists)
+            self._create_table_if_not_exists()
+
+            # Now it is safe to cache its columns
             self._cache_table_columns()
+
         except Exception as e:
             print(f"Failed to connect to QuestDB: {e}")
             raise
+
+    def _create_table_if_not_exists(self):
+        """Create table with initial schema if it doesn't exist"""
+        cursor = self.connection.cursor()
+        try:
+            create_table_sql = f"""
+            CREATE TABLE IF NOT EXISTS {self.table_name} (
+                timestamp TIMESTAMP,
+                data_json STRING
+            ) timestamp(timestamp) PARTITION BY DAY
+            """
+            cursor.execute(create_table_sql)
+            print(f"Table {self.table_name} created or already exists")
+        except Exception as e:
+            print(f"Error creating table: {e}")
+            raise
+        finally:
+            cursor.close()
 
     def _cache_table_columns(self):
         """
@@ -47,136 +68,118 @@ class QuestDBSink(BatchingSink):
         """
         cursor = self.connection.cursor()
         try:
-            # QuestDB helper function table_columns
             cursor.execute(
-                "SELECT column_name FROM table_columns(%s)",
-                (self.table_name,)
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = %s
+                """,
+                (self.table_name,),
             )
             self.table_columns = {row[0] for row in cursor.fetchall()}
-            if not self.table_columns:
-                # Table does not exist yet – create it and cache again
-                self._create_table_if_not_exists()
-                self._cache_table_columns()
-        finally:
-            cursor.close()
-
-    def _create_table_if_not_exists(self):
-        """Create the table with basic schema if it doesn't exist"""
-        cursor = self.connection.cursor()
-        try:
-            create_table_sql = f"""
-            CREATE TABLE IF NOT EXISTS {self.table_name} (
-                timestamp TIMESTAMP,
-                temperature DOUBLE,
-                humidity DOUBLE,
-                pressure DOUBLE
-            ) TIMESTAMP(timestamp) PARTITION BY DAY
-            """
-            cursor.execute(create_table_sql)
-            self.connection.commit()
-            print(f"Table {self.table_name} created or already exists")
+            print(f"Cached columns for table {self.table_name}: {self.table_columns}")
         except Exception as e:
-            print(f"Error creating table: {e}")
-            raise
+            print(f"Error caching table columns: {e}")
+            # If we can't get columns, assume basic structure
+            self.table_columns = {"timestamp", "data_json"}
         finally:
             cursor.close()
 
     def write(self, batch: SinkBatch):
-        """Write batch of records to QuestDB"""
+        """Write batch of messages to QuestDB"""
         if not batch:
             return
 
         cursor = self.connection.cursor()
         try:
-            records_to_insert = []
+            insert_sql = f"INSERT INTO {self.table_name} (timestamp, data_json) VALUES (%s, %s)"
             
+            records = []
             for item in batch:
-                print(f'Raw message: {item}')
+                print(f"Raw message: {item}")
                 
-                # Get the record data - check if it's directly in item or nested
-                if hasattr(item, 'value') and item.value:
-                    record = item.value if isinstance(item.value, dict) else json.loads(item.value)
-                else:
-                    # Try to get data directly from item
-                    record = item if isinstance(item, dict) else {}
+                # Get timestamp - use current time if not available
+                timestamp = datetime.now()
+                if hasattr(item, 'timestamp') and item.timestamp:
+                    try:
+                        # Convert from milliseconds to seconds if needed
+                        ts_value = item.timestamp
+                        if ts_value > 1e12:  # Likely milliseconds
+                            ts_value = ts_value / 1000
+                        timestamp = datetime.fromtimestamp(ts_value)
+                    except:
+                        timestamp = datetime.now()
                 
-                # Convert timestamp if present
-                if 'timestamp' in record:
-                    if isinstance(record['timestamp'], (int, float)):
-                        # Convert epoch timestamp to datetime
-                        record['timestamp'] = datetime.fromtimestamp(record['timestamp'] / 1000.0 if record['timestamp'] > 1e10 else record['timestamp'])
-                    elif isinstance(record['timestamp'], str):
-                        try:
-                            record['timestamp'] = datetime.fromisoformat(record['timestamp'].replace('Z', '+00:00'))
-                        except:
-                            record['timestamp'] = datetime.now()
-                else:
-                    record['timestamp'] = datetime.now()
-
-                # Strip fields that are NOT in the table
-                filtered = {k: v for k, v in record.items() 
-                           if k in self.table_columns}
-                # Always keep timestamp
-                filtered['timestamp'] = record['timestamp']
-                records_to_insert.append(filtered)
-
-            if not records_to_insert:
-                return
-
-            # Build insert only with allowed columns
-            columns = [col for col in self.table_columns if col != 'timestamp']
-            columns.insert(0, 'timestamp')  # make timestamp first
-            placeholders = ', '.join(['%s'] * len(columns))
-            insert_sql = (f"INSERT INTO {self.table_name} "
-                         f"({', '.join(columns)}) VALUES ({placeholders})")
-
-            # Prepare values for insertion
-            values_to_insert = []
-            for record in records_to_insert:
-                row_values = []
-                for col in columns:
-                    value = record.get(col)
-                    if value is not None:
-                        row_values.append(value)
+                # Handle the message value
+                data_json = "{}"
+                try:
+                    if hasattr(item, 'value') and item.value is not None:
+                        if isinstance(item.value, (dict, list)):
+                            data_json = json.dumps(item.value)
+                        elif isinstance(item.value, str):
+                            # Try to parse as JSON, if fails treat as plain string
+                            try:
+                                parsed = json.loads(item.value)
+                                data_json = json.dumps(parsed)
+                            except:
+                                data_json = json.dumps({"message": item.value})
+                        else:
+                            data_json = json.dumps({"value": str(item.value)})
                     else:
-                        row_values.append(None)
-                values_to_insert.append(tuple(row_values))
-
-            if values_to_insert:
-                cursor.executemany(insert_sql, values_to_insert)
-                print(f"Inserted {len(values_to_insert)} records into {self.table_name}")
-
+                        # If no value field, try to serialize the entire item
+                        data_json = json.dumps({"raw_item": str(item)})
+                except Exception as e:
+                    print(f"Error processing message value: {e}")
+                    data_json = json.dumps({"error": f"Failed to process: {str(e)}"})
+                
+                records.append((timestamp, data_json))
+            
+            cursor.executemany(insert_sql, records)
+            print(f"Successfully wrote {len(records)} records to {self.table_name}")
+            
         except Exception as e:
             print(f"Error writing to QuestDB: {e}")
             raise
         finally:
             cursor.close()
 
-    def teardown(self):
-        """Clean up database connection"""
+    def close(self):
+        """Close the database connection"""
         if self.connection:
             self.connection.close()
             print("QuestDB connection closed")
 
-# Create the QuestDB sink
-questdb_sink = QuestDBSink(
-    host=os.environ.get('QUESTDB_HOST'),
-    port=os.environ.get('QUESTDB_PORT'),
-    database=os.environ.get('QUESTDB_DATABASE'),
-    user=os.environ.get('QUESTDB_USER'),
-    password=os.environ.get('QUESTDB_PASSWORD_KEY'),
-    table_name=os.environ.get('QUESTDB_TABLE_NAME')
-)
-
+# Initialize application
 app = Application(
     consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "questdb-sink"),
     auto_offset_reset="earliest",
     commit_every=int(os.environ.get("BUFFER_SIZE", "1000")),
-    commit_interval=float(os.environ.get("BUFFER_TIMEOUT", "1.0")),
+    commit_interval=float(os.environ.get("BUFFER_TIMEOUT", "5.0")),
 )
 
-input_topic = app.topic(os.environ.get('QUESTDB_INPUT_TOPIC'))
+# Get input topic
+input_topic_name = os.environ.get('QUESTDB_INPUT_TOPIC')
+if not input_topic_name:
+    raise ValueError("QUESTDB_INPUT_TOPIC environment variable is required")
 
+input_topic = app.topic(input_topic_name)
+
+# Initialize QuestDB sink
+try:
+    port = int(os.environ.get('QUESTDB_PORT', '8812'))
+except ValueError:
+    port = 8812
+
+questdb_sink = QuestDBSink(
+    host=os.environ.get('QUESTDB_HOST', 'localhost'),
+    port=port,
+    database=os.environ.get('QUESTDB_DATABASE', 'qdb'),
+    user=os.environ.get('QUESTDB_USER', 'admin'),
+    password=os.environ.get('QUESTDB_PASSWORD_KEY', ''),
+    table_name=os.environ.get('QUESTDB_TABLE_NAME', 'data_sink')
+)
+
+# Create streaming dataframe and sink
 sdf = app.dataframe(input_topic)
 sdf.sink(questdb_sink)
 
