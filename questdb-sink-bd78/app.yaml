@@ -52,6 +52,8 @@ variables:
   - name: BUFFER_SIZE
     inputType: FreeText
     defaultValue: 1000
+  - name: QUESTDB_HOSTNAME
+    inputType: FreeText
   - name: QUESTDB_USERNAME
     inputType: FreeText
   - name: BUFFER_DELAY
@@ -60,8 +62,6 @@ variables:
   - name: CONSUMER_GROUP_NAME
     inputType: FreeText
     defaultValue: questdb-consumer
-  - name: input
-    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
