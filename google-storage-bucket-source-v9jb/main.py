@@ -30,7 +30,7 @@ def test_google_storage_connection():
             raise ValueError("GS_SECRET_KEY environment variable is required")
         
         # Get credentials from environment variable (assumes JSON content is already loaded)
-        credentials_json = os.getenv(secret_key_name)
+        credentials_json = os.getenv('GS_SECRET_KEY')
         if not credentials_json:
             raise ValueError("Credentials not found in specified environment variable")
         
