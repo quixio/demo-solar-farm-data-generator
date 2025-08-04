@@ -3,69 +3,68 @@ import os, json, base64, logging
 from google.cloud import storage
 from google.oauth2 import service_account
 
-log = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-# ------------------------------------------------------------------
-# 1. Pull JSON string from the env-var that Quix wired up
-# ------------------------------------------------------------------
 def _load_sa_json() -> dict:
     """
-    GS_API_KEY points to another env-var whose *value* is the JSON blob.
-    Handles raw JSON, \\n-escaped JSON, or base-64-encoded JSON.
+    Returns a dict parsed from a service-account key stored in:
+      • GS_API_KEY itself   (raw JSON, \\n-escaped JSON, or Base-64)
+      • or an env-var whose name is in GS_API_KEY (pointer style)
+    NEVER returns or logs the raw secret on failure.
     """
-    pointer = os.getenv("GS_API_KEY")      # e.g. "GCLOUD_PK_JSON"
-    if not pointer:
-        raise RuntimeError("GS_API_KEY is unset")
+    raw = os.getenv("GS_API_KEY")
+    if not raw:
+        raise RuntimeError("GS_API_KEY environment variable is not set")
 
-    blob = os.getenv(pointer)
-    if not blob:
-        raise RuntimeError(f"Env-var {pointer} is unset or empty")
+    # 👉 Case A – GS_API_KEY already IS the JSON
+    if raw.lstrip().startswith("{"):
+        return json.loads(raw)                                #  ✔ raw JSON
 
-    # --- try raw JSON first ---
+    # 👉 Case B – Base-64-encoded JSON in GS_API_KEY
     try:
-        return json.loads(blob)
-    except json.JSONDecodeError:
-        pass
-
-    # --- maybe Quix stored base-64? ---
-    try:
-        decoded = base64.b64decode(blob).decode()
-        return json.loads(decoded)
+        decoded = base64.b64decode(raw).decode()
+        if decoded.lstrip().startswith("{"):
+            return json.loads(decoded)                        #  ✔ base-64 JSON
     except Exception:
-        # --- or it’s a string with literal '\n' escapes ---
-        fixed = blob.replace("\\n", "\n")
-        return json.loads(fixed)
+        pass  # fall through
 
-# ------------------------------------------------------------------
-# 2. Build a Credential and Storage client
-# ------------------------------------------------------------------
+    # 👉 Case C – GS_API_KEY points to another variable
+    pointed = os.getenv(raw)
+    if not pointed:
+        raise RuntimeError(f"Pointer env-var '{raw}' is empty or unset")
+
+    try:
+        return json.loads(pointed)                            #  ✔ JSON via pointer
+    except json.JSONDecodeError:
+        # last gasp – maybe Quix stored with literal \n?
+        return json.loads(pointed.replace("\\n", "\n"))
+
 def gcs_client() -> storage.Client:
     sa_info = _load_sa_json()
-    creds    = service_account.Credentials.from_service_account_info(sa_info)   # uses helper ctor :contentReference[oaicite:0]{index=0}
-    project  = os.getenv("GS_PROJECT_ID", sa_info.get("project_id"))
-    client   = storage.Client(project=project, credentials=creds)
-    log.info("✓ GCS client ready (project: %s)", project)
+    creds   = service_account.Credentials.from_service_account_info(sa_info)   # official ctor :contentReference[oaicite:3]{index=3}
+    project = os.getenv("GS_PROJECT_ID", sa_info.get("project_id"))
+    client  = storage.Client(project=project, credentials=creds)              # accepts explicit creds :contentReference[oaicite:4]{index=4}
+    LOG.info("✓ GCS client initialised for project %s", project)
     return client
 
-# ------------------------------------------------------------------
-# 3. Tiny smoke-test: list *.csv under GS_FOLDER_PATH
-# ------------------------------------------------------------------
+# ---- Smoke-test ----------------------------------------------------
 def smoke_test():
-    bucket_name = os.getenv("GS_BUCKET")
-    prefix      = os.getenv("GS_FOLDER_PATH", "").lstrip("/") + "/"
-    if not bucket_name:
-        raise RuntimeError("GS_BUCKET is required")
+    bucket = os.getenv("GS_BUCKET")
+    if not bucket:
+        raise RuntimeError("GS_BUCKET must be set for smoke-test")
 
-    client = gcs_client()
-    bucket = client.bucket(bucket_name)
-    blobs  = [b for b in bucket.list_blobs(prefix=prefix) if b.name.lower().endswith(".csv")]
+    prefix = os.getenv("GS_FOLDER_PATH", "").lstrip("/") + "/"
+    blobs  = [
+        b for b in gcs_client().bucket(bucket).list_blobs(prefix=prefix)
+        if b.name.lower().endswith(".csv")
+    ]
     if not blobs:
-        log.warning("No CSV files under gs://%s/%s", bucket_name, prefix)
-        return
+        LOG.warning("No CSV files under gs://%s/%s", bucket, prefix); return
     first = blobs[0]
-    log.info("Found %d CSVs, previewing %s (%d bytes)", len(blobs), first.name, first.size)
-    print(first.download_as_text()[:500])                                      # Blob.download_as_text :contentReference[oaicite:1]{index=1}
+    LOG.info("Found %d CSVs. Previewing %s (%d bytes)", len(blobs),
+             first.name, first.size)
+    print(first.download_as_text()[:500])                                     # safe preview
 
 if __name__ == "__main__":
     smoke_test()
