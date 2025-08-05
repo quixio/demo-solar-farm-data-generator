@@ -1,15 +1,23 @@
 name: google-storage-bucket-source-draft-kg6s
 language: python
 variables:
-  - name: GCS_FILE_FORMAT
-    inputType: FreeText
-    defaultValue: csv
+  - name: output
+    inputType: OutputTopic
+    defaultValue: output
     required: true
   - name: GCS_BUCKET
     inputType: FreeText
     defaultValue: quix-workflow
     required: true
-  - name: GCP_CREDENTIALS_KEY
+  - name: GCS_REGION
+    inputType: FreeText
+    defaultValue: us-central1
+    required: true
+  - name: GCS_SECRET_KEY
+    inputType: Secret
+    defaultValue: GCLOUD_PK_JSON
+    required: true
+  - name: GCS_ACCESS_KEY_ID_KEY
     inputType: Secret
     defaultValue: GCLOUD_PK_JSON
     required: true
@@ -17,13 +25,21 @@ variables:
     inputType: FreeText
     defaultValue: /
     required: true
-  - name: GCP_PROJECT_ID
+  - name: GCS_FILE_FORMAT
     inputType: FreeText
-    defaultValue: quix-testing-365012
+    defaultValue: csv
     required: true
   - name: GCS_FILE_COMPRESSION
     inputType: FreeText
     defaultValue: none
+    required: true
+  - name: GCP_PROJECT_ID
+    inputType: FreeText
+    defaultValue: quix-testing-365012
+    required: true
+  - name: GCP_CREDENTIALS_KEY
+    inputType: Secret
+    defaultValue: GCLOUD_PK_JSON
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
