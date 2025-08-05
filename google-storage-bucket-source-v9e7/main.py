@@ -1,131 +1,198 @@
-# DEPENDENCIES:
-# pip install google-cloud-storage
-# pip install python-dotenv
-# END_DEPENDENCIES
-
 import os
 import json
 import csv
 from io import StringIO
 from google.cloud import storage
 from google.oauth2 import service_account
-from dotenv import load_dotenv
+from quixstreams import Application
+from quixstreams.sources.base import Source
 
-def test_gcs_connection():
-    """Test connection to Google Cloud Storage and read 10 sample items"""
+class GoogleStorageSource(Source):
     
-    # Load environment variables
-    load_dotenv()
-    
-    # Get configuration from environment variables
-    bucket_name = os.environ.get('GCS_BUCKET')
-    folder_path = os.environ.get('GCS_FOLDER_PATH', '/')
-    file_format = os.environ.get('GCS_FILE_FORMAT', 'csv')
-    project_id = os.environ.get('GCP_PROJECT_ID')
-    credentials_json = os.environ.get('GCP_CREDENTIALS_KEY')
-    
-    if not all([bucket_name, project_id, credentials_json]):
-        raise ValueError("Missing required environment variables")
-    
-    try:
-        # Parse credentials JSON
+    def __init__(self, bucket_name, project_id, credentials_key, folder_path="/", 
+                 file_format="csv", file_compression="none", **kwargs):
+        super().__init__(**kwargs)
+        self.bucket_name = bucket_name
+        self.project_id = project_id
+        self.credentials_key = credentials_key
+        self.folder_path = folder_path
+        self.file_format = file_format
+        self.file_compression = file_compression
+        self.client = None
+        self.bucket = None
+        
+    def setup(self):
         try:
-            credentials_dict = json.loads(credentials_json)
-        except json.JSONDecodeError:
-            raise ValueError("Invalid JSON format in credentials")
-        
-        # Create credentials object
-        credentials = service_account.Credentials.from_service_account_info(credentials_dict)
-        
-        # Initialize the GCS client
-        client = storage.Client(credentials=credentials, project=project_id)
-        
-        print(f"Successfully connected to Google Cloud Storage")
-        print(f"Project ID: {project_id}")
-        print(f"Bucket: {bucket_name}")
-        print(f"Folder path: {folder_path}")
-        print("=" * 50)
-        
-        # Get the bucket
-        bucket = client.bucket(bucket_name)
-        
-        # Clean up folder path
-        prefix = folder_path.strip('/') + '/' if folder_path and folder_path != '/' else ''
-        
-        # List blobs in the bucket with the specified prefix
-        blobs = list(bucket.list_blobs(prefix=prefix))
-        
-        if not blobs:
-            print("No files found in the specified path")
-            return
-        
-        # Filter files by format if specified
-        if file_format and file_format != 'none':
-            blobs = [blob for blob in blobs if blob.name.lower().endswith(f'.{file_format.lower()}')]
-        
-        if not blobs:
-            print(f"No {file_format} files found in the specified path")
-            return
-        
-        print(f"Found {len(blobs)} file(s)")
-        
-        # Read from the first file and extract 10 items
-        first_blob = blobs[0]
-        print(f"Reading from file: {first_blob.name}")
-        print("=" * 50)
-        
-        # Download the file content
-        content = first_blob.download_as_text()
-        
-        items_read = 0
-        
-        if file_format.lower() == 'csv':
-            # Handle CSV files
-            csv_reader = csv.reader(StringIO(content))
+            credentials_json = os.environ.get(self.credentials_key)
+            if not credentials_json:
+                raise ValueError("Credentials not found in environment variable")
             
-            for i, row in enumerate(csv_reader):
-                if items_read >= 10:
-                    break
-                print(f"Item {i + 1}: {row}")
-                items_read += 1
+            credentials_dict = json.loads(credentials_json)
+            credentials = service_account.Credentials.from_service_account_info(credentials_dict)
+            
+            self.client = storage.Client(credentials=credentials, project=self.project_id)
+            self.bucket = self.client.bucket(self.bucket_name)
+            
+            if hasattr(self, 'on_client_connect_success'):
+                self.on_client_connect_success()
                 
-        elif file_format.lower() == 'json':
-            # Handle JSON files
+        except Exception as e:
+            if hasattr(self, 'on_client_connect_failure'):
+                self.on_client_connect_failure(e)
+            raise
+    
+    def run(self):
+        self.setup()
+        
+        prefix = self.folder_path.strip('/') + '/' if self.folder_path and self.folder_path != '/' else ''
+        blobs = list(self.bucket.list_blobs(prefix=prefix))
+        
+        if self.file_format and self.file_format != 'none':
+            blobs = [blob for blob in blobs if blob.name.lower().endswith(f'.{self.file_format.lower()}')]
+        
+        message_count = 0
+        max_messages = 100
+        
+        for blob in blobs:
+            if not self.running or message_count >= max_messages:
+                break
+                
             try:
-                # Try to parse as JSON array
-                data = json.loads(content)
-                if isinstance(data, list):
-                    for i, item in enumerate(data[:10]):
-                        print(f"Item {i + 1}: {item}")
-                        items_read += 1
-                else:
-                    # Single JSON object
-                    print(f"Item 1: {data}")
-                    items_read = 1
-            except json.JSONDecodeError:
-                # Handle JSONL (newline-delimited JSON)
-                lines = content.strip().split('\n')
-                for i, line in enumerate(lines[:10]):
+                content = blob.download_as_text()
+                
+                if self.file_format.lower() == 'csv':
+                    csv_reader = csv.DictReader(StringIO(content))
+                    
+                    for row in csv_reader:
+                        if not self.running or message_count >= max_messages:
+                            break
+                            
+                        processed_row = self._process_csv_row(row)
+                        
+                        msg = self.serialize(
+                            key=blob.name,
+                            value=processed_row,
+                        )
+                        
+                        self.produce(
+                            key=msg.key,
+                            value=msg.value,
+                        )
+                        
+                        message_count += 1
+                        
+                elif self.file_format.lower() == 'json':
                     try:
-                        item = json.loads(line)
-                        print(f"Item {i + 1}: {item}")
-                        items_read += 1
+                        data = json.loads(content)
+                        if isinstance(data, list):
+                            for item in data:
+                                if not self.running or message_count >= max_messages:
+                                    break
+                                    
+                                msg = self.serialize(
+                                    key=blob.name,
+                                    value=item,
+                                )
+                                
+                                self.produce(
+                                    key=msg.key,
+                                    value=msg.value,
+                                )
+                                
+                                message_count += 1
+                        else:
+                            msg = self.serialize(
+                                key=blob.name,
+                                value=data,
+                            )
+                            
+                            self.produce(
+                                key=msg.key,
+                                value=msg.value,
+                            )
+                            
+                            message_count += 1
+                            
                     except json.JSONDecodeError:
-                        print(f"Item {i + 1}: {line}")
-                        items_read += 1
-        else:
-            # Handle text files or other formats
-            lines = content.strip().split('\n')
-            for i, line in enumerate(lines[:10]):
-                print(f"Item {i + 1}: {line}")
-                items_read += 1
+                        lines = content.strip().split('\n')
+                        for line in lines:
+                            if not self.running or message_count >= max_messages:
+                                break
+                                
+                            try:
+                                item = json.loads(line)
+                            except json.JSONDecodeError:
+                                item = {"raw_line": line}
+                                
+                            msg = self.serialize(
+                                key=blob.name,
+                                value=item,
+                            )
+                            
+                            self.produce(
+                                key=msg.key,
+                                value=msg.value,
+                            )
+                            
+                            message_count += 1
+                            
+                else:
+                    lines = content.strip().split('\n')
+                    for line in lines:
+                        if not self.running or message_count >= max_messages:
+                            break
+                            
+                        msg = self.serialize(
+                            key=blob.name,
+                            value={"raw_line": line},
+                        )
+                        
+                        self.produce(
+                            key=msg.key,
+                            value=msg.value,
+                        )
+                        
+                        message_count += 1
+                        
+            except Exception as e:
+                print(f"Error processing file {blob.name}: {str(e)}")
+                continue
+    
+    def _process_csv_row(self, row):
+        processed_row = {}
         
-        print("=" * 50)
-        print(f"Successfully read {items_read} items from Google Cloud Storage")
-        
-    except Exception as e:
-        print(f"Error connecting to Google Cloud Storage: {str(e)}")
-        raise
+        for key, value in row.items():
+            if key == 'timestamp':
+                processed_row[key] = value
+            elif key in ['hotend_temperature', 'bed_temperature', 'ambient_temperature', 'fluctuated_ambient_temperature']:
+                try:
+                    processed_row[key] = float(value)
+                except (ValueError, TypeError):
+                    processed_row[key] = value
+            else:
+                processed_row[key] = value
+                
+        return processed_row
+
+def main():
+    app = Application()
+    
+    output_topic = app.topic(os.environ['output'])
+    
+    source = GoogleStorageSource(
+        name="google-storage-source",
+        bucket_name=os.environ['GCS_BUCKET'],
+        project_id=os.environ['GCP_PROJECT_ID'],
+        credentials_key=os.environ['GCP_CREDENTIALS_KEY'],
+        folder_path=os.environ.get('GCS_FOLDER_PATH', '/'),
+        file_format=os.environ.get('GCS_FILE_FORMAT', 'csv'),
+        file_compression=os.environ.get('GCS_FILE_COMPRESSION', 'none')
+    )
+    
+    sdf = app.dataframe(topic=output_topic, source=source)
+    sdf.print(metadata=True)
+    
+    app.run()
 
 if __name__ == "__main__":
-    test_gcs_connection()
+    main()
