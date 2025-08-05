@@ -41,6 +41,12 @@ variables:
     inputType: Secret
     defaultValue: GCLOUD_PK_JSON
     required: true
+  - name: google_cloud_storage__prefix
+    inputType: FreeText
+  - name: google_cloud_storage__bucket
+    inputType: FreeText
+  - name: google_cloud_storage__credentials_json
+    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
