@@ -30,7 +30,7 @@ def main():
         print(f"Compression: {file_compression}")
         
         # Get credentials from environment variable
-        credentials_json = os.environ.get(credentials_key)
+        credentials_json = credentials_key
         if not credentials_json:
             raise ValueError("GCP credentials not found in environment variable")
         
