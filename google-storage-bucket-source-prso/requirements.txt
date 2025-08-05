@@ -1,7 +1,0 @@
-quixstreams[s3]==3.7.0
-python-dotenv
-bz2
-google-cloud-storage
-gzip
-pandas
-quixstreams
