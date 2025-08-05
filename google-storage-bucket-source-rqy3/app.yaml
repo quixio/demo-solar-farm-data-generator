@@ -37,7 +37,7 @@ variables:
     inputType: FreeText
     defaultValue: quix-testing-365012
     required: true
-  - name: GOOGLE_APPLICATION_CREDENTIALS
+  - name: OUTPUT_TOPIC
     inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
