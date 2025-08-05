@@ -9,7 +9,7 @@ from io import StringIO
 import pandas as pd
 from google.cloud import storage
 from quixstreams import Application
-from quixstreams.sources import Source   # <-- keep this import
+from quixstreams.sources import Source
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class GoogleStorageSource(Source):
     """
     Pulls objects from a Google Cloud Storage bucket and publishes each record
-    (row or JSON object) to a Quix Streams topic.
+    to a Quix Streams topic.
     """
 
     def __init__(
@@ -32,13 +32,11 @@ class GoogleStorageSource(Source):
         max_messages: int = 100,
         name: str = "gcs-source",
     ):
-        # --- Source needs a name ----------------------------------------
-        super().__init__(name=name)
-        # ----------------------------------------------------------------
+        super().__init__(name=name)                # Source needs a name
         self.bucket_name = bucket_name
         self.project_id = project_id
         self.credentials_json = credentials_json
-        self.folder_path = folder_path.lstrip("/")  # normalise
+        self.folder_path = folder_path.lstrip("/")
         self.file_format = file_format.lower()
         self.file_compression = file_compression.lower()
         self.max_messages = max_messages
@@ -52,7 +50,6 @@ class GoogleStorageSource(Source):
     #                            helpers                                 #
     # ------------------------------------------------------------------ #
     def _create_credentials_file(self) -> str:
-        """Write the service-account JSON to a temp file and return its path."""
         self.credentials_file = tempfile.NamedTemporaryFile(
             delete=False, suffix=".json"
         )
@@ -61,7 +58,6 @@ class GoogleStorageSource(Source):
         return self.credentials_file.name
 
     def _initialize_client(self) -> None:
-        """Lazy-load a GCS client and bucket handle."""
         if self._client:
             return
 
@@ -73,13 +69,11 @@ class GoogleStorageSource(Source):
         logger.info("Connected to bucket %s (project %s)", self.bucket_name, self.project_id)
 
     def _cleanup(self) -> None:
-        """Remove the temporary credentials file if one was created."""
         if self.credentials_file:
             os.unlink(self.credentials_file.name)
             self.credentials_file = None
 
     def _get_file_blobs(self) -> Iterator[storage.Blob]:
-        """Yield blobs under the configured folder path."""
         prefix = f"{self.folder_path.rstrip('/')}/" if self.folder_path else ""
         yield from self._client.list_blobs(self.bucket_name, prefix=prefix)
 
@@ -93,7 +87,6 @@ class GoogleStorageSource(Source):
         return obj if isinstance(obj, list) else [obj]
 
     def _transform_message(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        """Enrich each record just before publishing."""
         row["_ingested_ts"] = datetime.utcnow().isoformat()
         return row
 
@@ -101,10 +94,6 @@ class GoogleStorageSource(Source):
     #                       required abstract method                     #
     # ------------------------------------------------------------------ #
     def run(self) -> None:
-        """
-        Main loop: iterate over blobs, parse them, publish records, respect
-        `max_messages`, and clean up when finished or stopped.
-        """
         try:
             self._initialize_client()
 
@@ -128,7 +117,12 @@ class GoogleStorageSource(Source):
                 for record in records:
                     if not self.running or self.messages_sent >= self.max_messages:
                         break
-                    self.produce(value=self._transform_message(record))
+
+                    payload = json.dumps(
+                        self._transform_message(record)
+                    ).encode("utf-8")             # <-- NEW (serialise to bytes)
+
+                    self.produce(value=payload)
                     self.messages_sent += 1
 
             self.flush()
