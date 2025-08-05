@@ -38,7 +38,9 @@ variables:
     defaultValue: quix-testing-365012
     required: true
   - name: OUTPUT_TOPIC
-    inputType: FreeText
+    inputType: OutputTopic
+    multiline: false
+    defaultValue: output
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
