@@ -1,53 +1,42 @@
 name: questdb-sink-draft-imx7
 language: python
 variables:
-  - name: input
+  - name: QDB_INPUT_TOPIC
     inputType: InputTopic
-    description: This is the input topic
-    defaultValue: input-data
+    defaultValue: solar-data
     required: true
-  - name: INFLUXDB_HOST
+  - name: QDB_HOST
     inputType: FreeText
-    description: Host address for the InfluxDB instance.
-    defaultValue: http://influxdb3:80
+    defaultValue: questdb
     required: true
-  - name: INFLUXDB_TOKEN
+  - name: QDB_AUTH_TOKEN_KEY
     inputType: Secret
-    description: Authentication token to access InfluxDB.
+    defaultValue: QUESTDB_PW
     required: true
-  - name: INFLUXDB_ORG
+  - name: QDB_DATABASE
     inputType: FreeText
-    description: Organization name in InfluxDB.
-  - name: INFLUXDB_MEASUREMENT_NAME
-    inputType: FreeText
-    description: The InfluxDB measurement to write data to. If not specified, the name of the input topic will be used
-    defaultValue: measurement1
-  - name: INFLUXDB_DATABASE
-    inputType: FreeText
-    description: Database name in InfluxDB where data should be stored.
+    defaultValue: qdb
     required: true
-  - name: INFLUXDB_TAG_KEYS
+  - name: QDB_TABLE_NAME
     inputType: FreeText
-    description: 'The tags to include when writing the measurement data. Example: Tag1,Tag2'
-  - name: INFLUXDB_FIELD_KEYS
-    inputType: FreeText
-    description: 'The fields to include when writing the measurement data. Example: Field1,Field2'
-  - name: CONSUMER_GROUP_NAME
-    inputType: FreeText
-    description: The name of the consumer group to use when consuming from Kafka
-    defaultValue: influxdb-sink
+    defaultValue: measurement2
     required: true
-  - name: TIMESTAMP_COLUMN
+  - name: QDB_CONSUMER_GROUP_NAME
     inputType: FreeText
-    description: 'The column containing the timestamp column. NOTE: Must be nanoseconds'
-  - name: BUFFER_SIZE
+    defaultValue: questdb-sink
+    required: true
+  - name: QDB_BUFFER_SIZE
     inputType: FreeText
-    description: The number of records that sink holds before flush data to the InfluxDb
     defaultValue: 1000
-  - name: BUFFER_TIMEOUT
+    required: true
+  - name: QDB_BUFFER_TIMEOUT
     inputType: FreeText
-    description: The number of seconds that sink holds before flush data to the InfluxDb
     defaultValue: 1
+    required: true
+  - name: QDB_PORT
+    inputType: FreeText
+    defaultValue: 8812
+    required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
