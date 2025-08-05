@@ -1,141 +1,230 @@
-# DEPENDENCIES:
-# pip install google-cloud-storage
-# pip install python-dotenv
-# pip install pandas
-# END_DEPENDENCIES
-
 import os
 import json
-import tempfile
+import logging
 from google.cloud import storage
 from google.oauth2 import service_account
-from dotenv import load_dotenv
-import pandas as pd
+from quixstreams import Application
+from quixstreams.sources.base import Source
 
-def main():
-    # Load environment variables
-    load_dotenv()
-    
-    try:
-        # Get configuration from environment variables
-        bucket_name = os.environ['GCS_BUCKET']
-        folder_path = os.environ['GCS_FOLDER_PATH'].strip('/')
-        file_format = os.environ['GCS_FILE_FORMAT'].lower()
-        file_compression = os.environ['GCS_FILE_COMPRESSION']
-        project_id = os.environ['GCP_PROJECT_ID']
-        credentials_json_str = os.environ['GCP_CREDENTIALS_KEY']
-        
-        print(f"Connecting to GCS bucket: {bucket_name}")
-        print(f"Project ID: {project_id}")
-        print(f"Folder path: {folder_path}")
-        print(f"File format: {file_format}")
-        print(f"Compression: {file_compression}")
-        
-        # Parse credentials JSON
-        credentials_dict = json.loads(credentials_json_str)
-        credentials = service_account.Credentials.from_service_account_info(credentials_dict)
-        
-        # Initialize GCS client
-        client = storage.Client(credentials=credentials, project=project_id)
-        bucket = client.bucket(bucket_name)
-        
-        print(f"\nSuccessfully connected to bucket: {bucket_name}")
-        
-        # List files in the specified folder
-        prefix = folder_path + "/" if folder_path else ""
-        blobs = list(bucket.list_blobs(prefix=prefix))
-        
-        if not blobs:
-            print(f"No files found in folder: {folder_path}")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class GoogleStorageSource(Source):
+    def __init__(self, bucket_name, folder_path, file_format, project_id, credentials_json_str, name="google-storage-source"):
+        super().__init__(name=name)
+        self.bucket_name = bucket_name
+        self.folder_path = folder_path.strip('/')
+        self.file_format = file_format.lower()
+        self.project_id = project_id
+        self.credentials_json_str = credentials_json_str
+        self.client = None
+        self.bucket = None
+        self.message_count = 0
+        self.max_messages = 100
+
+    def setup(self):
+        try:
+            credentials_dict = json.loads(self.credentials_json_str)
+            credentials = service_account.Credentials.from_service_account_info(credentials_dict)
+            self.client = storage.Client(credentials=credentials, project=self.project_id)
+            self.bucket = self.client.bucket(self.bucket_name)
+            logger.info(f"Successfully connected to GCS bucket: {self.bucket_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to connect to GCS: {str(e)}")
+            return False
+
+    def run(self):
+        if not self.client or not self.bucket:
+            logger.error("GCS client not initialized")
+            return
+
+        try:
+            prefix = self.folder_path + "/" if self.folder_path else ""
+            blobs = list(self.bucket.list_blobs(prefix=prefix))
+            
+            if not blobs:
+                logger.warning(f"No files found in folder: {self.folder_path}")
+                return
+
+            target_files = [blob for blob in blobs if blob.name.endswith(f'.{self.file_format}')]
+            
+            if not target_files:
+                logger.warning(f"No {self.file_format} files found in folder: {self.folder_path}")
+                return
+
+            logger.info(f"Found {len(target_files)} {self.file_format} files")
+
+            for blob in target_files:
+                if not self.running or self.message_count >= self.max_messages:
+                    break
+                
+                self._process_file(blob)
+
+            logger.info(f"Finished processing. Total messages sent: {self.message_count}")
+
+        except Exception as e:
+            logger.error(f"Error processing files: {str(e)}")
+
+    def _process_file(self, blob):
+        try:
+            logger.info(f"Processing file: {blob.name}")
+            content = blob.download_as_text()
+            
+            if self.file_format == 'csv':
+                self._process_csv_content(content, blob.name)
+            elif self.file_format == 'json':
+                self._process_json_content(content, blob.name)
+            else:
+                self._process_text_content(content, blob.name)
+                
+        except Exception as e:
+            logger.error(f"Error processing file {blob.name}: {str(e)}")
+
+    def _process_csv_content(self, content, filename):
+        lines = content.strip().split('\n')
+        if not lines:
             return
         
-        # Filter files by format
-        target_files = []
-        for blob in blobs:
-            if blob.name.endswith(f'.{file_format}'):
-                target_files.append(blob)
+        headers = [header.strip() for header in lines[0].split(',')]
         
-        if not target_files:
-            print(f"No {file_format} files found in folder: {folder_path}")
-            return
-        
-        print(f"\nFound {len(target_files)} {file_format} files")
-        
-        # Read sample data from files
-        items_read = 0
-        target_items = 10
-        
-        for blob in target_files:
-            if items_read >= target_items:
+        for line in lines[1:]:
+            if not self.running or self.message_count >= self.max_messages:
                 break
                 
-            print(f"\nReading from file: {blob.name}")
-            
-            try:
-                # Download blob content
-                content = blob.download_as_text()
-                
-                if file_format == 'csv':
-                    # Create a temporary file to read CSV with pandas
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as temp_file:
-                        temp_file.write(content)
-                        temp_file_path = temp_file.name
-                    
-                    try:
-                        # Read CSV with pandas
-                        df = pd.read_csv(temp_file_path)
+            if line.strip():
+                try:
+                    values = [value.strip() for value in line.split(',')]
+                    if len(values) == len(headers):
+                        record = dict(zip(headers, values))
                         
-                        # Read remaining items needed
-                        remaining_items = target_items - items_read
-                        rows_to_read = min(len(df), remaining_items)
+                        # Convert numeric fields based on schema analysis
+                        if 'hotend_temperature' in record:
+                            record['hotend_temperature'] = float(record['hotend_temperature'])
+                        if 'bed_temperature' in record:
+                            record['bed_temperature'] = float(record['bed_temperature'])
+                        if 'ambient_temperature' in record:
+                            record['ambient_temperature'] = float(record['ambient_temperature'])
+                        if 'fluctuated_ambient_temperature' in record:
+                            record['fluctuated_ambient_temperature'] = float(record['fluctuated_ambient_temperature'])
                         
-                        for i in range(rows_to_read):
-                            print(f"\nItem {items_read + 1}:")
-                            print(df.iloc[i].to_dict())
-                            items_read += 1
-                            
-                    finally:
-                        # Clean up temporary file
-                        os.unlink(temp_file_path)
+                        # Add metadata
+                        record['_source_file'] = filename
+                        record['_file_type'] = 'csv'
                         
-                elif file_format == 'json':
-                    # Handle JSON files
-                    lines = content.strip().split('\n')
-                    for line in lines:
-                        if items_read >= target_items:
-                            break
-                        if line.strip():
-                            try:
-                                item = json.loads(line)
-                                print(f"\nItem {items_read + 1}:")
-                                print(item)
-                                items_read += 1
-                            except json.JSONDecodeError:
-                                continue
-                                
-                else:
-                    # Handle text files or other formats
-                    lines = content.strip().split('\n')
-                    for line in lines:
-                        if items_read >= target_items:
-                            break
-                        if line.strip():
-                            print(f"\nItem {items_read + 1}:")
-                            print(line.strip())
-                            items_read += 1
-                            
-            except Exception as e:
-                print(f"Error reading file {blob.name}: {str(e)}")
-                continue
+                        msg = self.serialize(
+                            key=filename,
+                            value=record
+                        )
+                        
+                        self.produce(
+                            key=msg.key,
+                            value=msg.value
+                        )
+                        
+                        self.message_count += 1
+                        
+                except Exception as e:
+                    logger.warning(f"Error processing CSV line: {str(e)}")
+                    continue
+
+    def _process_json_content(self, content, filename):
+        lines = content.strip().split('\n')
         
-        print(f"\nSuccessfully read {items_read} items from GCS bucket")
+        for line in lines:
+            if not self.running or self.message_count >= self.max_messages:
+                break
+                
+            if line.strip():
+                try:
+                    record = json.loads(line)
+                    record['_source_file'] = filename
+                    record['_file_type'] = 'json'
+                    
+                    msg = self.serialize(
+                        key=filename,
+                        value=record
+                    )
+                    
+                    self.produce(
+                        key=msg.key,
+                        value=msg.value
+                    )
+                    
+                    self.message_count += 1
+                    
+                except json.JSONDecodeError:
+                    continue
+
+    def _process_text_content(self, content, filename):
+        lines = content.strip().split('\n')
+        
+        for line in lines:
+            if not self.running or self.message_count >= self.max_messages:
+                break
+                
+            if line.strip():
+                record = {
+                    'content': line.strip(),
+                    '_source_file': filename,
+                    '_file_type': 'text'
+                }
+                
+                msg = self.serialize(
+                    key=filename,
+                    value=record
+                )
+                
+                self.produce(
+                    key=msg.key,
+                    value=msg.value
+                )
+                
+                self.message_count += 1
+
+def main():
+    try:
+        app = Application()
+        
+        bucket_name = os.environ['GCS_BUCKET']
+        folder_path = os.environ['GCS_FOLDER_PATH']
+        file_format = os.environ['GCS_FILE_FORMAT']
+        project_id = os.environ['GCP_PROJECT_ID']
+        credentials_json_str = os.environ['GCP_CREDENTIALS_KEY']
+        output_topic_name = os.environ['output']
+        
+        logger.info(f"Initializing Google Storage source for bucket: {bucket_name}")
+        logger.info(f"Folder path: {folder_path}")
+        logger.info(f"File format: {file_format}")
+        logger.info(f"Output topic: {output_topic_name}")
+        
+        source = GoogleStorageSource(
+            bucket_name=bucket_name,
+            folder_path=folder_path,
+            file_format=file_format,
+            project_id=project_id,
+            credentials_json_str=credentials_json_str,
+            name="google-storage-bucket-source-draft-kg6s"
+        )
+        
+        topic = app.topic(
+            output_topic_name,
+            value_serializer='json',
+            key_serializer='string'
+        )
+        
+        sdf = app.dataframe(topic=topic, source=source)
+        sdf.print(metadata=True)
+        
+        logger.info("Starting Google Storage source application")
+        app.run()
         
     except KeyError as e:
-        print(f"Missing required environment variable: {e}")
-    except json.JSONDecodeError:
-        print("Invalid JSON format in credentials")
+        logger.error(f"Missing required environment variable: {e}")
+        raise
     except Exception as e:
-        print(f"Connection test failed: {str(e)}")
+        logger.error(f"Application failed: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     main()
