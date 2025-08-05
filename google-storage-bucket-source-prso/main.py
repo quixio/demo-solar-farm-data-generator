@@ -1,22 +1,187 @@
-# DEPENDENCIES:
-# pip install google-cloud-storage
-# pip install python-dotenv
-# pip install pandas
-# END_DEPENDENCIES
-
 import os
 import json
-import tempfile
+import logging
+import time
+from typing import Dict, Any, Iterator
 from google.cloud import storage
 from google.oauth2 import service_account
-from dotenv import load_dotenv
 import pandas as pd
 import io
+from quixstreams import Application
+from quixstreams.sources import Source
+from dotenv import load_dotenv
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+load_dotenv()
+
+class GoogleStorageSource(Source):
+    def __init__(
+        self,
+        bucket_name: str,
+        folder_path: str,
+        file_format: str,
+        file_compression: str,
+        credentials: Dict[str, Any],
+        project_id: str
+    ):
+        super().__init__()
+        self.bucket_name = bucket_name
+        self.folder_path = folder_path.lstrip('/').rstrip('/') + '/' if folder_path.strip('/') else ''
+        self.file_format = file_format.lower()
+        self.file_compression = file_compression.lower()
+        self.project_id = project_id
+        self.credentials = service_account.Credentials.from_service_account_info(credentials)
+        self.client = None
+        self.bucket = None
+        self.processed_files = set()
+        self.message_count = 0
+        self.max_messages = 100
+
+    def configure(self, topic, **kwargs):
+        super().configure(topic, **kwargs)
+        try:
+            self.client = storage.Client(credentials=self.credentials, project=self.project_id)
+            self.bucket = self.client.bucket(self.bucket_name)
+            logger.info(f"Successfully connected to Google Storage bucket: {self.bucket_name}")
+        except Exception as e:
+            logger.error(f"Failed to connect to Google Storage: {e}")
+            raise
+
+    def run(self) -> Iterator[Dict[str, Any]]:
+        logger.info(f"Starting to process files from bucket: {self.bucket_name}")
+        
+        try:
+            # List all files in the bucket with the specified folder path
+            blobs = list(self.bucket.list_blobs(prefix=self.folder_path))
+            
+            # Filter files by format
+            matching_files = [blob for blob in blobs if blob.name.endswith(f'.{self.file_format}')]
+            
+            if not matching_files:
+                logger.warning(f"No {self.file_format} files found in folder: {self.folder_path}")
+                return
+
+            logger.info(f"Found {len(matching_files)} {self.file_format} files to process")
+
+            for blob in matching_files:
+                if self.message_count >= self.max_messages:
+                    logger.info(f"Reached maximum message limit of {self.max_messages}")
+                    break
+                    
+                if blob.name in self.processed_files:
+                    continue
+
+                logger.info(f"Processing file: {blob.name}")
+                
+                try:
+                    # Download file content
+                    file_content = blob.download_as_bytes()
+                    
+                    # Handle compression
+                    if self.file_compression == 'gzip':
+                        import gzip
+                        file_content = gzip.decompress(file_content)
+                    elif self.file_compression == 'bz2':
+                        import bz2
+                        file_content = bz2.decompress(file_content)
+                    
+                    # Process based on file format
+                    if self.file_format == 'csv':
+                        yield from self._process_csv(file_content, blob.name)
+                    elif self.file_format == 'json':
+                        yield from self._process_json(file_content, blob.name)
+                    else:
+                        logger.warning(f"Unsupported file format: {self.file_format}")
+                        continue
+                    
+                    self.processed_files.add(blob.name)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing file {blob.name}: {e}")
+                    continue
+
+        except Exception as e:
+            logger.error(f"Error during file processing: {e}")
+            raise
+
+    def _process_csv(self, file_content: bytes, filename: str) -> Iterator[Dict[str, Any]]:
+        try:
+            df = pd.read_csv(io.BytesIO(file_content))
+            
+            for index, row in df.iterrows():
+                if self.message_count >= self.max_messages:
+                    break
+                    
+                # Transform the row to the expected format
+                message = {
+                    "timestamp": str(row.get("timestamp", "")),
+                    "hotend_temperature": float(row.get("hotend_temperature", 0.0)),
+                    "bed_temperature": float(row.get("bed_temperature", 0.0)),
+                    "ambient_temperature": float(row.get("ambient_temperature", 0.0)),
+                    "fluctuated_ambient_temperature": float(row.get("fluctuated_ambient_temperature", 0.0)),
+                    "_source_file": filename,
+                    "_record_index": int(index)
+                }
+                
+                self.message_count += 1
+                yield message
+                
+        except Exception as e:
+            logger.error(f"Error processing CSV file {filename}: {e}")
+            raise
+
+    def _process_json(self, file_content: bytes, filename: str) -> Iterator[Dict[str, Any]]:
+        try:
+            content_str = file_content.decode('utf-8')
+            
+            # Try JSON Lines format first
+            try:
+                lines = content_str.strip().split('\n')
+                for index, line in enumerate(lines):
+                    if self.message_count >= self.max_messages:
+                        break
+                        
+                    if line.strip():
+                        record = json.loads(line)
+                        message = self._transform_json_record(record, filename, index)
+                        self.message_count += 1
+                        yield message
+                        
+            except json.JSONDecodeError:
+                # Try as single JSON array or object
+                data = json.loads(content_str)
+                if isinstance(data, list):
+                    for index, record in enumerate(data):
+                        if self.message_count >= self.max_messages:
+                            break
+                        message = self._transform_json_record(record, filename, index)
+                        self.message_count += 1
+                        yield message
+                else:
+                    # Single JSON object
+                    message = self._transform_json_record(data, filename, 0)
+                    self.message_count += 1
+                    yield message
+                    
+        except Exception as e:
+            logger.error(f"Error processing JSON file {filename}: {e}")
+            raise
+
+    def _transform_json_record(self, record: Dict[str, Any], filename: str, index: int) -> Dict[str, Any]:
+        return {
+            "timestamp": str(record.get("timestamp", "")),
+            "hotend_temperature": float(record.get("hotend_temperature", 0.0)),
+            "bed_temperature": float(record.get("bed_temperature", 0.0)),
+            "ambient_temperature": float(record.get("ambient_temperature", 0.0)),
+            "fluctuated_ambient_temperature": float(record.get("fluctuated_ambient_temperature", 0.0)),
+            "_source_file": filename,
+            "_record_index": int(index)
+        }
 
 def main():
-    # Load environment variables
-    load_dotenv()
-    
     try:
         # Get environment variables
         bucket_name = os.environ.get('GCS_BUCKET')
@@ -25,150 +190,65 @@ def main():
         file_compression = os.environ.get('GCS_FILE_COMPRESSION', 'none')
         project_id = os.environ.get('GCP_PROJECT_ID')
         credentials_json = os.environ.get('GCP_CREDENTIALS_KEY')
-        
+        output_topic_name = os.environ.get('output', 'output')
+
         # Validate required environment variables
-        if not bucket_name:
-            raise ValueError("GCS_BUCKET environment variable is required")
-        if not project_id:
-            raise ValueError("GCP_PROJECT_ID environment variable is required")
-        if not credentials_json:
-            raise ValueError("GCP_CREDENTIALS_KEY environment variable is required")
+        required_vars = {
+            'GCS_BUCKET': bucket_name,
+            'GCP_PROJECT_ID': project_id,
+            'GCP_CREDENTIALS_KEY': credentials_json
+        }
         
-        print(f"Connecting to Google Cloud Storage bucket: {bucket_name}")
-        print(f"Project ID: {project_id}")
-        print(f"Folder path: {folder_path}")
-        print(f"File format: {file_format}")
-        print(f"File compression: {file_compression}")
-        
+        for var_name, var_value in required_vars.items():
+            if not var_value:
+                raise ValueError(f"Required environment variable {var_name} is not set")
+
         # Parse credentials JSON
         try:
             credentials_dict = json.loads(credentials_json)
         except json.JSONDecodeError:
             raise ValueError("Invalid JSON format in GCP_CREDENTIALS_KEY")
+
+        logger.info(f"Initializing Google Storage source for bucket: {bucket_name}")
+        logger.info(f"Folder path: {folder_path}")
+        logger.info(f"File format: {file_format}")
+        logger.info(f"File compression: {file_compression}")
+
+        # Initialize Quix Streams application
+        app = Application()
+
+        # Create output topic
+        output_topic = app.topic(output_topic_name)
+
+        # Create Google Storage source
+        source = GoogleStorageSource(
+            bucket_name=bucket_name,
+            folder_path=folder_path,
+            file_format=file_format,
+            file_compression=file_compression,
+            credentials=credentials_dict,
+            project_id=project_id
+        )
+
+        # Create streaming dataframe
+        sdf = app.dataframe(topic=output_topic, source=source)
         
-        # Create credentials object
-        credentials = service_account.Credentials.from_service_account_info(credentials_dict)
+        # Add message processing and logging
+        sdf = sdf.apply(lambda row: {
+            **row,
+            "_processed_at": time.time()
+        })
         
-        # Initialize the Google Cloud Storage client
-        client = storage.Client(credentials=credentials, project=project_id)
-        
-        # Get the bucket
-        bucket = client.bucket(bucket_name)
-        
-        print(f"\nSuccessfully connected to bucket: {bucket_name}")
-        
-        # Clean folder path
-        if folder_path.startswith('/'):
-            folder_path = folder_path[1:]
-        if folder_path and not folder_path.endswith('/'):
-            folder_path += '/'
-        
-        # List files in the bucket with the specified folder path and file format
-        blobs = list(bucket.list_blobs(prefix=folder_path))
-        
-        # Filter files by format
-        matching_files = []
-        for blob in blobs:
-            if blob.name.endswith(f'.{file_format}'):
-                matching_files.append(blob)
-        
-        if not matching_files:
-            print(f"No {file_format} files found in folder: {folder_path}")
-            return
-        
-        print(f"\nFound {len(matching_files)} {file_format} files in the bucket")
-        
-        # Read sample data from the first file
-        sample_blob = matching_files[0]
-        print(f"\nReading sample data from: {sample_blob.name}")
-        
-        # Download the file content
-        file_content = sample_blob.download_as_bytes()
-        
-        # Handle compression if needed
-        if file_compression != 'none':
-            if file_compression == 'gzip':
-                import gzip
-                file_content = gzip.decompress(file_content)
-            elif file_compression == 'bz2':
-                import bz2
-                file_content = bz2.decompress(file_content)
-            else:
-                print(f"Warning: Unsupported compression format: {file_compression}")
-        
-        # Read data based on file format
-        if file_format.lower() == 'csv':
-            # Read CSV data
-            df = pd.read_csv(io.BytesIO(file_content))
-            
-            # Get first 10 records
-            sample_records = df.head(10)
-            
-            print(f"\nFirst 10 records from {sample_blob.name}:")
-            print("=" * 80)
-            
-            for index, row in sample_records.iterrows():
-                print(f"Record {index + 1}:")
-                for column, value in row.items():
-                    print(f"  {column}: {value}")
-                print("-" * 40)
-                
-        elif file_format.lower() == 'json':
-            # Read JSON data
-            content_str = file_content.decode('utf-8')
-            
-            # Try to parse as JSON Lines format first
-            try:
-                lines = content_str.strip().split('\n')
-                records = []
-                for line in lines[:10]:  # Get first 10 lines
-                    if line.strip():
-                        records.append(json.loads(line))
-                        
-                print(f"\nFirst 10 records from {sample_blob.name}:")
-                print("=" * 80)
-                
-                for i, record in enumerate(records):
-                    print(f"Record {i + 1}:")
-                    print(json.dumps(record, indent=2))
-                    print("-" * 40)
-                    
-            except json.JSONDecodeError:
-                # Try to parse as single JSON array
-                try:
-                    data = json.loads(content_str)
-                    if isinstance(data, list):
-                        records = data[:10]  # Get first 10 items
-                    else:
-                        records = [data]  # Single object
-                        
-                    print(f"\nFirst 10 records from {sample_blob.name}:")
-                    print("=" * 80)
-                    
-                    for i, record in enumerate(records):
-                        print(f"Record {i + 1}:")
-                        print(json.dumps(record, indent=2))
-                        print("-" * 40)
-                        
-                except json.JSONDecodeError as e:
-                    print(f"Error parsing JSON file: {e}")
-                    
-        else:
-            # For other formats, just show raw content (first 10 lines)
-            content_str = file_content.decode('utf-8', errors='ignore')
-            lines = content_str.split('\n')[:10]
-            
-            print(f"\nFirst 10 lines from {sample_blob.name}:")
-            print("=" * 80)
-            
-            for i, line in enumerate(lines):
-                print(f"Line {i + 1}: {line}")
-        
-        print(f"\nConnection test completed successfully!")
-        print(f"Successfully read sample data from Google Cloud Storage bucket: {bucket_name}")
-        
+        # Print messages for debugging
+        sdf.print(metadata=True)
+
+        logger.info("Starting Quix Streams application...")
+        app.run()
+
+    except KeyboardInterrupt:
+        logger.info("Application stopped by user")
     except Exception as e:
-        print(f"Error connecting to Google Cloud Storage: {str(e)}")
+        logger.error(f"Application error: {e}")
         raise
 
 if __name__ == "__main__":
