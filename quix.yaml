@@ -338,51 +338,6 @@ deployments:
         inputType: FreeText
         required: true
         value: qdb
-  - name: Google Storage Bucket-deployment-pr40
-    application: google-storage-bucket-source-1gf5
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
-    variables:
-      - name: output
-        inputType: OutputTopic
-        required: true
-        value: output
-      - name: GS_BUCKET
-        inputType: FreeText
-        required: true
-        value: quix-workflow
-      - name: GS_REGION
-        inputType: FreeText
-        required: true
-        value: us-central1
-      - name: GS_SECRET_KEY
-        inputType: Secret
-        required: true
-        secretKey: GCLOUD_PK_JSON
-      - name: GS_ACCESS_KEY_ID_KEY
-        inputType: Secret
-        required: true
-        secretKey: GCLOUD_PK_JSON
-      - name: GS_FOLDER_PATH
-        inputType: FreeText
-        required: true
-        value: /
-      - name: GS_FILE_FORMAT
-        inputType: FreeText
-        required: true
-        value: csv
-      - name: GS_FILE_COMPRESSION
-        inputType: FreeText
-        required: true
-        value: none
-      - name: GS_PROJECT_ID
-        inputType: FreeText
-        required: true
-        value: quix-testing-365012
   - name: google storage bucket-deployment-vfuh
     application: google-storage-bucket-source-tdgd
     version: latest
