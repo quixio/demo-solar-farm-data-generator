@@ -11,6 +11,10 @@ variables:
     multiline: false
     defaultValue: GCLOUD_PK_JSON
     required: true
+  - name: GOOGLE_SHEETS_RANGE
+    inputType: FreeText
+    multiline: false
+    defaultValue: Sheet1!A1:Z100
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
