@@ -1,10 +1,25 @@
 name: google-sheets-source-draft-t3yf
 language: python
 variables:
-  - name: output
-    inputType: OutputTopic
-    description: Name of the output topic to write into
-    defaultValue: csv-data
+  - name: GOOGLE_API_CLIENT_SECRET_KEY
+    inputType: Secret
+    defaultValue: GKCOUD_PK_JSON
+    required: true
+  - name: GOOGLE_API_CLIENT_ID_KEY
+    inputType: Secret
+    defaultValue: GOOGLE_API_CLIENT_ID
+    required: true
+  - name: GOOGLE_SHEET_ID
+    inputType: FreeText
+    defaultValue: 1i9m16qPwCkrvjE3VXTmm3-v7gNQFGo8nLbRDGtIgFOI
+    required: true
+  - name: GOOGLE_SHEETS_ACCESS_TOKEN_KEY
+    inputType: Secret
+    defaultValue: GCLOUD_PK_JSON
+    required: true
+  - name: GOOGLE_SHEETS_REFRESH_TOKEN_KEY
+    inputType: Secret
+    defaultValue: GOOGLE_SHEETS_REFRESH_TOKEN
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
