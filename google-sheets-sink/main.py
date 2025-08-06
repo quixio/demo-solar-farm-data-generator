@@ -137,7 +137,7 @@ def main():
     sheets_sink = GoogleSheetsSink()
     sdf.sink(sheets_sink)
 
-    app.run(count=10, timeout=20)
+    app.run()
 
 
 if __name__ == "__main__":
