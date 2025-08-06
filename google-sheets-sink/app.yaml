@@ -1,10 +1,22 @@
 name: google-sheets-sink-draft
 language: python
 variables:
-  - name: input
+  - name: GSHEET_INPUT
     inputType: InputTopic
-    description: Name of the input topic to listen to.
-    defaultValue: transform
+    defaultValue: solar-data
+    required: true
+  - name: GSHEET_API_KEY
+    inputType: Secret
+    defaultValue: GCLOUD_PK_JSON
+    required: true
+  - name: GSHEET_ID
+    inputType: FreeText
+    defaultValue: 1i9m16qPwCkrvjE3VXTmm3-v7gNQFGo8nLbRDGtIgFOI
+    required: true
+  - name: GSHEET_SHEET_NAME
+    inputType: FreeText
+    defaultValue: Sheet2
+    required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
