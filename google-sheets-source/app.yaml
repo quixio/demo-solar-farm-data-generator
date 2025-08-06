@@ -16,7 +16,8 @@ variables:
     required: true
   - name: SPREADSHEET_NAME
     inputType: FreeText
-    defaultValue: csv-test-workflow
+    multiline: false
+    defaultValue: 1i9m16qPwCkrvjE3VXTmm3-v7gNQFGo8nLbRDGtIgFOI
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
