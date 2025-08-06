@@ -1,87 +1,87 @@
-# import the Quix Streams modules for interacting with Kafka.
-# For general info, see https://quix.io/docs/quix-streams/introduction.html
-# For sources, see https://quix.io/docs/quix-streams/connectors/sources/index.html
-from quixstreams import Application
-from quixstreams.sources import Source
+# DEPENDENCIES:
+# pip install google-api-python-client
+# pip install google-auth
+# pip install google-auth-oauthlib
+# pip install google-auth-httplib2
+# END_DEPENDENCIES
 
 import os
+import json
+from googleapiclient.discovery import build
+from google.oauth2.service_account import Credentials
 
-# for local dev, you can load env vars from a .env file
-# from dotenv import load_dotenv
-# load_dotenv()
-
-
-class MemoryUsageGenerator(Source):
+def test_google_sheets_connection():
     """
-    A Quix Streams Source enables Applications to read data from something other
-    than Kafka and publish it to a desired Kafka topic.
-
-    You provide a Source to an Application, which will handle the Source's lifecycle.
-
-    In this case, we have built a new Source that reads from a static set of
-    already loaded json data representing a server's memory usage over time.
-
-    There are numerous pre-built sources available to use out of the box; see:
-    https://quix.io/docs/quix-streams/connectors/sources/index.html
+    Test connection to Google Sheets and read 10 sample records.
     """
+    try:
+        # Get credentials from environment variable
+        credentials_json = os.environ.get('GCP_SHEETS_CREDENTIALS_KEY')
+        if not credentials_json:
+            raise ValueError("GCP_SHEETS_CREDENTIALS_KEY environment variable not found")
+        
+        # Get sheet ID from environment variable
+        sheet_id = os.environ.get('SHEET_NAME')
+        if not sheet_id:
+            raise ValueError("SHEET_NAME environment variable not found")
+        
+        # Parse the credentials JSON
+        try:
+            credentials_info = json.loads(credentials_json)
+        except json.JSONDecodeError as e:
+            raise ValueError("Invalid JSON format in credentials")
+        
+        # Create credentials object
+        credentials = Credentials.from_service_account_info(
+            credentials_info,
+            scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
+        )
+        
+        # Build the Sheets API service
+        service = build('sheets', 'v4', credentials=credentials)
+        
+        print(f"Successfully connected to Google Sheets API")
+        print(f"Reading from sheet ID: {sheet_id}")
+        
+        # Get sheet metadata to find available sheets
+        sheet_metadata = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+        sheets = sheet_metadata.get('sheets', [])
+        
+        if not sheets:
+            print("No sheets found in the spreadsheet")
+            return
+        
+        # Use the first sheet
+        first_sheet = sheets[0]['properties']['title']
+        print(f"Reading from sheet: {first_sheet}")
+        
+        # Read data from the first sheet (first 10 rows)
+        range_name = f"{first_sheet}!A1:Z10"  # Read first 10 rows, columns A to Z
+        
+        result = service.spreadsheets().values().get(
+            spreadsheetId=sheet_id,
+            range=range_name
+        ).execute()
+        
+        values = result.get('values', [])
+        
+        if not values:
+            print("No data found in the specified range")
+            return
+        
+        print(f"\nSuccessfully read {len(values)} rows from Google Sheets:")
+        print("-" * 50)
+        
+        # Print each row with row number
+        for i, row in enumerate(values, 1):
+            print(f"Row {i}: {row}")
+        
+        print("-" * 50)
+        print(f"Connection test completed successfully!")
+        
+    except Exception as e:
+        print(f"Error connecting to Google Sheets: {str(e)}")
+        raise
 
-    memory_allocation_data = [
-        {"m": "mem", "host": "host1", "used_percent": 64.56, "time": 1577836800000000000},
-        {"m": "mem", "host": "host2", "used_percent": 71.89, "time": 1577836801000000000},
-        {"m": "mem", "host": "host1", "used_percent": 63.27, "time": 1577836803000000000},
-        {"m": "mem", "host": "host2", "used_percent": 73.45, "time": 1577836804000000000},
-        {"m": "mem", "host": "host1", "used_percent": 62.98, "time": 1577836806000000000},
-        {"m": "mem", "host": "host2", "used_percent": 74.33, "time": 1577836808000000000},
-        {"m": "mem", "host": "host1", "used_percent": 65.21, "time": 1577836810000000000},
-    ]
-
-    def run(self):
-        """
-        Each Source must have a `run` method.
-
-        It will include the logic behind your source, contained within a
-        "while self.running" block for exiting when its parent Application stops.
-
-        There a few methods on a Source available for producing to Kafka, like
-        `self.serialize` and `self.produce`.
-        """
-        data = iter(self.memory_allocation_data)
-        # either break when the app is stopped, or data is exhausted
-        while self.running:
-            try:
-                event = next(data)
-                event_serialized = self.serialize(key=event["host"], value=event)
-                self.produce(key=event_serialized.key, value=event_serialized.value)
-                print("Source produced event successfully!")
-            except StopIteration:
-                print("Source finished producing messages.")
-                return
-
-
-def main():
-    """ Here we will set up our Application. """
-
-    # Setup necessary objects
-    app = Application(consumer_group="data_producer", auto_create_topics=True)
-    memory_usage_source = MemoryUsageGenerator(name="memory-usage-producer")
-    output_topic = app.topic(name=os.environ["output"])
-
-    # --- Setup Source ---
-    # OPTION 1: no additional processing with a StreamingDataFrame
-    # Generally the recommended approach; no additional operations needed!
-    app.add_source(source=memory_usage_source, topic=output_topic)
-
-    # OPTION 2: additional processing with a StreamingDataFrame
-    # Useful for consolidating additional data cleanup into 1 Application.
-    # In this case, do NOT use `app.add_source()`.
-    # sdf = app.dataframe(source=source)
-    # <sdf operations here>
-    # sdf.to_topic(topic=output_topic) # you must do this to output your data!
-
-    # With our pipeline defined, now run the Application
-    app.run()
-
-
-#  Sources require execution under a conditional main
 if __name__ == "__main__":
-    main()
+    test_google_sheets_connection()
