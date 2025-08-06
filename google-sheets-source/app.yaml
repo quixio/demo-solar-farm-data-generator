@@ -2,7 +2,8 @@ name: google-sheets-source-draft
 language: python
 variables:
   - name: GOOGLE_SHEETS_CREDS
-    inputType: FreeText
+    inputType: Secret
+    multiline: false
     defaultValue: GCLOUD_PK_JSON
     required: true
   - name: GOOGLE_SHEETS_API_VERSION
