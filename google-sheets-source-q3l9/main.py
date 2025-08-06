@@ -1,87 +1,159 @@
-# DEPENDENCIES:
-# pip install google-api-python-client
-# pip install google-auth
-# pip install google-auth-oauthlib
-# pip install google-auth-httplib2
-# END_DEPENDENCIES
-
 import os
 import json
+import time
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
+from quixstreams import Application
+from quixstreams.sources.base import Source
 
-def test_google_sheets_connection():
-    """
-    Test connection to Google Sheets and read 10 sample records.
-    """
-    try:
-        # Get credentials from environment variable
-        credentials_json = os.environ.get('GCP_SHEETS_CREDENTIALS_KEY')
-        if not credentials_json:
-            raise ValueError("GCP_SHEETS_CREDENTIALS_KEY environment variable not found")
+
+class GoogleSheetsSource(Source):
+    def __init__(self, sheet_id, credentials_json, name="google-sheets-source"):
+        super().__init__(name=name)
+        self.sheet_id = sheet_id
+        self.credentials_json = credentials_json
+        self.service = None
+        self.message_count = 0
+        self.max_messages = 100
         
-        # Get sheet ID from environment variable
-        sheet_id = os.environ.get('SHEET_NAME')
-        if not sheet_id:
-            raise ValueError("SHEET_NAME environment variable not found")
-        
-        # Parse the credentials JSON
+    def setup(self):
+        """Setup Google Sheets API connection"""
         try:
-            credentials_info = json.loads(credentials_json)
-        except json.JSONDecodeError as e:
-            raise ValueError("Invalid JSON format in credentials")
-        
-        # Create credentials object
-        credentials = Credentials.from_service_account_info(
-            credentials_info,
-            scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
-        )
-        
-        # Build the Sheets API service
-        service = build('sheets', 'v4', credentials=credentials)
-        
-        print(f"Successfully connected to Google Sheets API")
-        print(f"Reading from sheet ID: {sheet_id}")
-        
-        # Get sheet metadata to find available sheets
-        sheet_metadata = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
-        sheets = sheet_metadata.get('sheets', [])
-        
-        if not sheets:
-            print("No sheets found in the spreadsheet")
-            return
-        
-        # Use the first sheet
-        first_sheet = sheets[0]['properties']['title']
-        print(f"Reading from sheet: {first_sheet}")
-        
-        # Read data from the first sheet (first 10 rows)
-        range_name = f"{first_sheet}!A1:Z10"  # Read first 10 rows, columns A to Z
-        
-        result = service.spreadsheets().values().get(
-            spreadsheetId=sheet_id,
-            range=range_name
-        ).execute()
-        
-        values = result.get('values', [])
-        
-        if not values:
-            print("No data found in the specified range")
-            return
-        
-        print(f"\nSuccessfully read {len(values)} rows from Google Sheets:")
-        print("-" * 50)
-        
-        # Print each row with row number
-        for i, row in enumerate(values, 1):
-            print(f"Row {i}: {row}")
-        
-        print("-" * 50)
-        print(f"Connection test completed successfully!")
-        
-    except Exception as e:
-        print(f"Error connecting to Google Sheets: {str(e)}")
-        raise
+            credentials_info = json.loads(self.credentials_json)
+            credentials = Credentials.from_service_account_info(
+                credentials_info,
+                scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
+            )
+            self.service = build('sheets', 'v4', credentials=credentials)
+            
+            # Test connection by getting sheet metadata
+            sheet_metadata = self.service.spreadsheets().get(spreadsheetId=self.sheet_id).execute()
+            sheets = sheet_metadata.get('sheets', [])
+            
+            if not sheets:
+                raise ValueError("No sheets found in the spreadsheet")
+                
+            print(f"Successfully connected to Google Sheets. Found {len(sheets)} sheet(s)")
+            
+        except Exception as e:
+            print(f"Failed to setup Google Sheets connection: {str(e)}")
+            raise
+    
+    def run(self):
+        """Main source loop to read data from Google Sheets"""
+        if not self.service:
+            self.setup()
+            
+        try:
+            # Get sheet metadata to find available sheets
+            sheet_metadata = self.service.spreadsheets().get(spreadsheetId=self.sheet_id).execute()
+            sheets = sheet_metadata.get('sheets', [])
+            
+            # Use the first sheet
+            first_sheet = sheets[0]['properties']['title']
+            print(f"Reading from sheet: {first_sheet}")
+            
+            # Read all data from the sheet
+            range_name = f"{first_sheet}"
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=self.sheet_id,
+                range=range_name
+            ).execute()
+            
+            values = result.get('values', [])
+            
+            if not values:
+                print("No data found in the sheet")
+                return
+                
+            # Extract headers from first row
+            headers = values[0] if values else []
+            data_rows = values[1:] if len(values) > 1 else []
+            
+            print(f"Found {len(data_rows)} data rows with headers: {headers}")
+            
+            # Process each row
+            for row_index, row in enumerate(data_rows):
+                if not self.running or self.message_count >= self.max_messages:
+                    break
+                    
+                # Pad row with empty strings if it's shorter than headers
+                padded_row = row + [''] * (len(headers) - len(row))
+                
+                # Create record from row data
+                record = {}
+                for i, header in enumerate(headers):
+                    record[header] = padded_row[i] if i < len(padded_row) else ''
+                
+                # Create message with metadata
+                message = {
+                    "timestamp": time.time(),
+                    "sheet_id": self.sheet_id,
+                    "sheet_name": first_sheet,
+                    "row_index": row_index + 2,  # +2 because we skip header and use 1-based indexing
+                    "data": record
+                }
+                
+                # Serialize and produce message
+                serialized = self.serialize(
+                    key=f"{self.sheet_id}_{row_index}",
+                    value=message
+                )
+                
+                self.produce(
+                    key=serialized.key,
+                    value=serialized.value
+                )
+                
+                self.message_count += 1
+                print(f"Produced message {self.message_count}: Row {row_index + 2}")
+                
+                # Small delay to avoid overwhelming the system
+                time.sleep(0.1)
+                
+            print(f"Finished processing {self.message_count} messages from Google Sheets")
+            
+        except Exception as e:
+            print(f"Error reading from Google Sheets: {str(e)}")
+            raise
+
+
+def main():
+    # Get configuration from environment variables
+    sheet_id = os.environ.get("SHEET_NAME")
+    credentials_json = os.environ.get("GCP_SHEETS_CREDENTIALS_KEY")
+    
+    if not sheet_id:
+        raise ValueError("SHEET_NAME environment variable is required")
+    if not credentials_json:
+        raise ValueError("GCP_SHEETS_CREDENTIALS_KEY environment variable is required")
+    
+    # Create Quix Streams application
+    app = Application(
+        consumer_group="google-sheets-source-draft-q3l9",
+        auto_create_topics=True
+    )
+    
+    # Create Google Sheets source
+    source = GoogleSheetsSource(
+        sheet_id=sheet_id,
+        credentials_json=credentials_json,
+        name="google-sheets-source"
+    )
+    
+    # Create output topic
+    output_topic = app.topic(name="output")
+    
+    # Create streaming dataframe with source
+    sdf = app.dataframe(topic=output_topic, source=source)
+    
+    # Print messages for monitoring
+    sdf.print(metadata=True)
+    
+    # Run the application
+    print("Starting Google Sheets source application...")
+    app.run()
+
 
 if __name__ == "__main__":
-    test_google_sheets_connection()
+    main()
