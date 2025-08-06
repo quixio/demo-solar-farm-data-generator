@@ -5,10 +5,6 @@ variables:
     inputType: Secret
     defaultValue: GKCOUD_PK_JSON
     required: true
-  - name: GOOGLE_API_CLIENT_ID_KEY
-    inputType: Secret
-    defaultValue: GOOGLE_API_CLIENT_ID
-    required: true
   - name: GOOGLE_SHEET_ID
     inputType: FreeText
     defaultValue: 1i9m16qPwCkrvjE3VXTmm3-v7gNQFGo8nLbRDGtIgFOI
