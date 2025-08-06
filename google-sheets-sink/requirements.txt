@@ -1,2 +1,4 @@
 quixstreams==3.13.1
 python-dotenv
+gspread
+oauth2client
