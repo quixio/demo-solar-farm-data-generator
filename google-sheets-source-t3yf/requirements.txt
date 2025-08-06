@@ -1,6 +1,5 @@
-quixstreams
+quixstreams==3.14.1
 python-dotenv
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-google-api-python-client
+google-cloud-storage
+googleapiclient
+quixstreams
