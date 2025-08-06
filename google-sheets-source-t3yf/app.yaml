@@ -17,10 +17,6 @@ variables:
     inputType: Secret
     defaultValue: GCLOUD_PK_JSON
     required: true
-  - name: GOOGLE_SHEETS_REFRESH_TOKEN_KEY
-    inputType: Secret
-    defaultValue: GOOGLE_SHEETS_REFRESH_TOKEN
-    required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
