@@ -3,7 +3,8 @@ language: python
 variables:
   - name: GOOGLE_SHEETS_RANGE
     inputType: FreeText
-    defaultValue: Sheet1A1
+    multiline: false
+    defaultValue: Sheet1!A1
     required: true
   - name: GCP_SHEETS_API_KEY_SECRET
     inputType: Secret
