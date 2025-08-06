@@ -1,10 +1,6 @@
 name: google-sheets-source-draft-t3yf
 language: python
 variables:
-  - name: GOOGLE_API_CLIENT_SECRET_KEY
-    inputType: Secret
-    defaultValue: GKCOUD_PK_JSON
-    required: true
   - name: GOOGLE_SHEET_ID
     inputType: FreeText
     defaultValue: 1i9m16qPwCkrvjE3VXTmm3-v7gNQFGo8nLbRDGtIgFOI
