@@ -4,7 +4,7 @@ variables:
   - name: GOOGLE_SHEETS_RANGE
     inputType: FreeText
     multiline: false
-    defaultValue: Sheet1!A1:Z
+    defaultValue: Sheet1!A1:Z100
     required: true
   - name: GCP_SHEETS_API_KEY_SECRET
     inputType: Secret
