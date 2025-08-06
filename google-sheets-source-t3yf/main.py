@@ -1,116 +1,155 @@
-# DEPENDENCIES:
-# pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
-# END_DEPENDENCIES
-
 import os
 import json
+import time
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from quixstreams import Application
+from quixstreams.sources.base import Source
 
 
-DEFAULT_SHEET_NAME = "Sheet1"
-DEFAULT_CELL_RANGE = "A1:Z"        # read first 26 columns
+class GoogleSheetsSource(Source):
+    def __init__(self, name="google-sheets-source", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.sheet_id = os.getenv("GOOGLE_SHEET_ID")
+        self.access_token_key = os.getenv("GOOGLE_SHEETS_ACCESS_TOKEN_KEY")
+        self.credentials = None
+        self.service = None
+        self.message_count = 0
+        self.max_messages = 100
 
-def _build_valid_range(raw: str | None) -> str:
-    """
-    Make sure the range string sent to the Sheets API is valid.
-    Acceptable user inputs:
-        Sheet1!A1:B5   (already valid)
-        Sheet1         (no '!' → treat as sheet, read default cells)
-        A1:B5          (no '!' but starts with column char → treat as cells)
-        "" / None      (use defaults)
-    """
-    if not raw:  # empty → completely default
-        return f"{DEFAULT_SHEET_NAME}!{DEFAULT_CELL_RANGE}"
+    def setup(self):
+        try:
+            creds_json = os.getenv(self.access_token_key)
+            if not creds_json:
+                raise ValueError("Google Sheets credentials not found")
 
-    # If the user forgot the '!'
-    if "!" not in raw:
-        # Starts with a letter → looks like a pure cell range
-        if raw[0].isalpha():
-            return f"{DEFAULT_SHEET_NAME}!{raw}"
-        # Otherwise treat it as a sheet name
-        return f"{raw}!{DEFAULT_CELL_RANGE}"
+            creds_dict = json.loads(creds_json)
+            self.credentials = Credentials.from_service_account_info(
+                creds_dict,
+                scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
+            )
 
-    # Already contains '!' → assume it's valid
-    return raw
+            self.service = build("sheets", "v4", credentials=self.credentials)
+            
+            test_result = (
+                self.service.spreadsheets()
+                .values()
+                .get(spreadsheetId=self.sheet_id, range="Sheet1!A1:C1")
+                .execute()
+            )
+            
+            print(f"Successfully connected to Google Sheets: {self.sheet_id}")
+            
+        except Exception as e:
+            print(f"Failed to connect to Google Sheets: {e}")
+            raise
+
+    def run(self):
+        try:
+            self.setup()
+            
+            sheet_range = "Sheet1!A1:Z"
+            result = (
+                self.service.spreadsheets()
+                .values()
+                .get(spreadsheetId=self.sheet_id, range=sheet_range)
+                .execute()
+            )
+            
+            values = result.get("values", [])
+            if not values:
+                print("No data found in the Google Sheet")
+                return
+
+            print(f"Found {len(values)} rows in Google Sheets")
+            
+            header_row = values[0] if values else []
+            
+            for row_index, row in enumerate(values[1:], start=1):
+                if not self.running:
+                    print("Source stopped by application")
+                    break
+                    
+                if self.message_count >= self.max_messages:
+                    print(f"Reached maximum message limit: {self.max_messages}")
+                    break
+
+                try:
+                    record = {}
+                    for col_index, value in enumerate(row):
+                        if col_index < len(header_row):
+                            field_name = header_row[col_index] or f"field_{col_index + 1}"
+                        else:
+                            field_name = f"field_{col_index + 1}"
+                        
+                        if value.isdigit():
+                            record[field_name] = int(value)
+                        elif self._is_float(value):
+                            record[field_name] = float(value)
+                        else:
+                            record[field_name] = value
+                    
+                    record["row_number"] = row_index
+                    record["timestamp"] = int(time.time() * 1000)
+                    
+                    message = self.serialize(
+                        key=f"row_{row_index}",
+                        value=record
+                    )
+                    
+                    self.produce(
+                        key=message.key,
+                        value=message.value
+                    )
+                    
+                    self.message_count += 1
+                    print(f"Produced message {self.message_count}: row_{row_index}")
+                    
+                    time.sleep(0.1)
+                    
+                except Exception as e:
+                    print(f"Error processing row {row_index}: {e}")
+                    continue
+
+            print(f"Google Sheets source finished. Processed {self.message_count} messages")
+
+        except HttpError as error:
+            print(f"Google Sheets API error: {error}")
+            if error.resp and error.resp.status == 403:
+                print("Access denied. Check that the service account has access to the sheet")
+            elif error.resp and error.resp.status == 404:
+                print("Sheet not found. Verify the sheet ID")
+        except json.JSONDecodeError:
+            print("Error parsing credentials JSON")
+        except Exception as e:
+            print(f"Unexpected error in Google Sheets source: {e}")
+
+    def _is_float(self, value):
+        try:
+            float(value)
+            return '.' in value
+        except ValueError:
+            return False
 
 
-def test_google_sheets_connection() -> None:
-    """
-    Test connection to Google Sheets and print up to 10 rows.
-    """
-    try:
-        # ------------------------------------------------------------------
-        # 1. Credentials
-        # ------------------------------------------------------------------
-        creds_json = os.getenv("GCP_SHEETS_API_KEY_SECRET")
-        if not creds_json:
-            raise ValueError("GCP_SHEETS_API_KEY_SECRET environment variable not found")
-
-        creds_dict = json.loads(creds_json)
-        credentials = Credentials.from_service_account_info(
-            creds_dict,
-            scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
-        )
-
-        # ------------------------------------------------------------------
-        # 2. Parameters (document id & range)
-        # ------------------------------------------------------------------
-        document_id = os.getenv("GOOGLE_SHEETS_DOCUMENT_ID")
-        if not document_id:
-            raise ValueError("GOOGLE_SHEETS_DOCUMENT_ID environment variable not found")
-
-        raw_range = os.getenv("GOOGLE_SHEETS_RANGE")
-        sheet_range = _build_valid_range(raw_range)
-
-        print(f"Connecting to Google Sheet: {document_id}")
-        print(f"Reading from range: {sheet_range}")
-        print("-" * 50)
-
-        # ------------------------------------------------------------------
-        # 3. Call Sheets API
-        # ------------------------------------------------------------------
-        service = build("sheets", "v4", credentials=credentials)
-        result = (
-            service.spreadsheets()
-            .values()
-            .get(spreadsheetId=document_id, range=sheet_range)
-            .execute()
-        )
-        values = result.get("values", [])
-
-        if not values:
-            print("No data found in the sheet.")
-            return
-
-        print(f"Total rows found: {len(values)}")
-        print("Reading first 10 records:")
-        print("-" * 50)
-
-        for i, row in enumerate(values[:10], start=1):
-            print(f"Record {i}: {row}")
-
-        print("-" * 50)
-        print(f"Successfully read {min(10, len(values))} record(s) from Google Sheets")
-
-    # ----------------------------------------------------------------------
-    # 4. Error handling
-    # ----------------------------------------------------------------------
-    except HttpError as error:
-        print(f"Google Sheets API error: {error}")
-        if error.resp is not None:
-            if error.resp.status == 403:
-                print("Access denied. Check that the service account is shared on the sheet.")
-            elif error.resp.status == 404:
-                print("Sheet not found. Verify the document ID and range.")
-    except json.JSONDecodeError:
-        print("Error parsing credentials JSON: invalid JSON format")
-    except ValueError as err:
-        print(f"Configuration error: {err}")
-    except Exception as err:
-        print(f"Unexpected error occurred: {err}")
+def main():
+    app = Application(
+        consumer_group="google-sheets-source-group",
+        auto_create_topics=True
+    )
+    
+    source = GoogleSheetsSource(name="google-sheets-producer")
+    
+    output_topic = app.topic(name="output")
+    
+    sdf = app.dataframe(source=source)
+    sdf.print(metadata=True)
+    sdf.to_topic(output_topic)
+    
+    print("Starting Google Sheets source application...")
+    app.run()
 
 
 if __name__ == "__main__":
-    test_google_sheets_connection()
+    main()
