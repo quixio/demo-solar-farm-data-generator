@@ -15,6 +15,10 @@ variables:
     inputType: FreeText
     multiline: false
     defaultValue: Sheet1!A1:Z100
+  - name: output
+    inputType: OutputTopic
+    multiline: false
+    defaultValue: output
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
