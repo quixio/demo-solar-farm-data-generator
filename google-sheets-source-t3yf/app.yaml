@@ -5,8 +5,9 @@ variables:
     inputType: FreeText
     defaultValue: 1i9m16qPwCkrvjE3VXTmm3-v7gNQFGo8nLbRDGtIgFOI
     required: true
-  - name: GOOGLE_SHEETS_ACCESS_TOKEN_KEY
+  - name: GCP_SHEETS_API_KEY_SECRET
     inputType: Secret
+    multiline: false
     defaultValue: GCLOUD_PK_JSON
     required: true
 dockerfile: dockerfile
