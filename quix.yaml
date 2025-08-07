@@ -301,6 +301,9 @@ deployments:
       cpu: 200
       memory: 500
       replicas: 1
+    publicAccess:
+      enabled: true
+      urlPrefix: clickhousetestserver-928f3
     network:
       serviceName: clickhouse-test
       ports:
