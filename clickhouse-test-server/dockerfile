@@ -12,6 +12,9 @@ WORKDIR /app
 # Optional: if you want to override configs, copy your custom config.xml here
 # COPY config.xml /etc/clickhouse-server/config.xml
 
+ENV CLICKHOUSE_USER=clickadmin
+ENV CLICKHOUSE_PASSWORD=clickpass
+
 # Optional: expose port for internal reference (Quix will do the actual mapping)
 EXPOSE 8123
 EXPOSE 9000
