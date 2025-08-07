@@ -307,7 +307,7 @@ deployments:
     network:
       serviceName: clickhouse-test
       ports:
-        - port: 8123
+        - port: 80
           targetPort: 8123
         - port: 9000
           targetPort: 9000
