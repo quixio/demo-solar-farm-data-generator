@@ -1,28 +1,17 @@
-FROM python:3.12.5-slim-bookworm
-			
-# Set environment variables for non-interactive setup and unbuffered output
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
-    PYTHONIOENCODING=UTF-8 \
-    PYTHONPATH="/app"
-			
-# Build argument for setting the main app path
-ARG MAINAPPPATH=.
-			
-# Set working directory inside the container
+FROM clickhouse/clickhouse-server:23.3
+
+# Set environment to non-interactive (not strictly necessary here, but safe)
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Optional: create /app directory for compatibility with Quix default PYTHONPATH
+RUN mkdir -p /app
+
+# Set working directory to satisfy Quix’s Dockerfile conventions
 WORKDIR /app
-			
-# Copy requirements to leverage Docker cache
-COPY "${MAINAPPPATH}/requirements.txt" "${MAINAPPPATH}/requirements.txt"
-			
-# Install dependencies without caching
-RUN pip install --no-cache-dir -r "${MAINAPPPATH}/requirements.txt"
-			
-# Copy entire application into container
-COPY . .
-			
-# Set working directory to main app path
-WORKDIR "/app/${MAINAPPPATH}"
-			
-# Define the container's startup command
-ENTRYPOINT ["python3", "main.py"]
+
+# Optional: if you want to override configs, copy your custom config.xml here
+# COPY config.xml /etc/clickhouse-server/config.xml
+
+# Optional: expose port for internal reference (Quix will do the actual mapping)
+EXPOSE 8123
+EXPOSE 9000
