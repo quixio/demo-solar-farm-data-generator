@@ -293,6 +293,21 @@ deployments:
         inputType: FreeText
         required: true
         value: tsadmin
+  - name: Clickhouse Test Server
+    application: clickhouse-test-server
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 200
+      memory: 500
+      replicas: 1
+    network:
+      serviceName: clickhouse-test
+      ports:
+        - port: 8123
+          targetPort: 8123
+        - port: 9000
+          targetPort: 9000
 
 # This section describes the Topics of the data pipeline
 topics:
