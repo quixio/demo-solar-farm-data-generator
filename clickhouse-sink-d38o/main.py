@@ -35,7 +35,7 @@ class ClickHouseSink(BatchingSink):
                 username='default',
                 password=self.token,
                 database=self.database,
-                secure=True,
+                secure=False,
                 connect_timeout=30
             )
 
