@@ -32,7 +32,7 @@ class ClickHouseSink(BatchingSink):
         try:
             self.client = clickhouse_connect.get_client(
                 host=self.host,
-                username='default',
+                username='clickadmin',
                 password=self.token,
                 database=self.database,
                 secure=False,
