@@ -9,19 +9,25 @@ from datetime import datetime
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch
 import clickhouse_connect
-
 from dotenv import load_dotenv
+
 load_dotenv()
 
+
 class ClickHouseSink(BatchingSink):
-    def __init__(self, host, token, database, table, on_client_connect_success=None, on_client_connect_failure=None):
-        super().__init__(on_client_connect_success=on_client_connect_success, on_client_connect_failure=on_client_connect_failure)
+    def __init__(self, host, token, database, table,
+                 on_client_connect_success=None,
+                 on_client_connect_failure=None):
+        super().__init__(
+            on_client_connect_success=on_client_connect_success,
+            on_client_connect_failure=on_client_connect_failure
+        )
         self.host = host
         self.token = token
         self.database = database
         self.table = table
         self.client = None
-        
+
     def setup(self):
         try:
             self.client = clickhouse_connect.get_client(
@@ -29,13 +35,12 @@ class ClickHouseSink(BatchingSink):
                 username='default',
                 password=self.token,
                 database=self.database,
-                secure=True
+                secure=True,
+                connect_timeout=30
             )
-            
-            # Test connection
+
             self.client.ping()
-            
-            # Create table if it doesn't exist
+
             create_table_sql = f"""
             CREATE TABLE IF NOT EXISTS {self.table} (
                 panel_id String,
@@ -64,38 +69,42 @@ class ClickHouseSink(BatchingSink):
             ) ENGINE = MergeTree()
             ORDER BY (panel_id, timestamp)
             """
-            
             self.client.command(create_table_sql)
-            
-            if self.on_client_connect_success:
-                self.on_client_connect_success()
-                
+
+            if self._on_client_connect_success:
+                self._on_client_connect_success()
+
         except Exception as e:
-            if self.on_client_connect_failure:
-                self.on_client_connect_failure(e)
+            if self._on_client_connect_failure:
+                self._on_client_connect_failure(e)
             raise
-    
+
     def write(self, batch: SinkBatch):
         if not self.client:
             raise RuntimeError("ClickHouse client not initialized")
-            
+
         rows = []
         for item in batch:
             try:
-                # Parse the value field which contains JSON string
-                if isinstance(item.value, str):
-                    data = json.loads(item.value)
-                else:
-                    data = item.value
+                print(f'Raw message: {item}')
                 
-                # Convert epoch nanoseconds to datetime
+                # Parse the value field which contains the actual solar data as JSON string
+                if hasattr(item, 'value') and isinstance(item.value, str):
+                    data = json.loads(item.value)
+                elif hasattr(item, 'value') and isinstance(item.value, dict):
+                    data = item.value
+                else:
+                    print(f"Unexpected item structure: {item}")
+                    continue
+
+                # Convert timestamp from nanoseconds to datetime
                 timestamp_ns = data.get('timestamp', 0)
                 timestamp_dt = datetime.fromtimestamp(timestamp_ns / 1_000_000_000)
                 
-                # Convert kafka timestamp to datetime
+                # Convert kafka timestamp from milliseconds to datetime
                 kafka_timestamp_dt = datetime.fromtimestamp(item.timestamp / 1000)
-                
-                row = [
+
+                rows.append([
                     data.get('panel_id', ''),
                     data.get('location_id', ''),
                     data.get('location_name', ''),
@@ -119,21 +128,16 @@ class ClickHouseSink(BatchingSink):
                     batch.topic,
                     batch.partition,
                     item.offset
-                ]
-                rows.append(row)
-                
+                ])
+
             except Exception as e:
                 print(f"Error processing item: {e}")
                 continue
-        
-        if rows:
-            try:
-                self.client.insert(self.table, rows)
-            except Exception as e:
-                print(f"Error inserting to ClickHouse: {e}")
-                raise
 
-# Initialize application
+        if rows:
+            self.client.insert(self.table, rows)
+
+
 try:
     buffer_size = int(os.environ.get('CLICKHOUSE_BUFFER_SIZE', '1000'))
 except ValueError:
@@ -153,7 +157,6 @@ app = Application(
 
 input_topic = app.topic(os.environ.get('CLICKHOUSE_TOPIC'))
 
-# Create ClickHouse sink
 clickhouse_sink = ClickHouseSink(
     host=os.environ.get('CLICKHOUSE_HOST'),
     token=os.environ.get('CLICKHOUSE_TOKEN_KEY'),
@@ -162,10 +165,6 @@ clickhouse_sink = ClickHouseSink(
 )
 
 sdf = app.dataframe(input_topic)
-
-# Debug: Print raw message structure
-sdf = sdf.apply(lambda item: print(f'Raw message: {item}') or item)
-
 sdf.sink(clickhouse_sink)
 
 if __name__ == "__main__":
