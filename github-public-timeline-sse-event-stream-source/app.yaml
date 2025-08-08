@@ -1,6 +1,10 @@
 name: github-public-timeline-sse-event-stre-source-draft
 language: python
 variables:
+  - name: GITHUB_SSE_PATH
+    inputType: FreeText
+    defaultValue: /events
+    required: true
   - name: GITHUB_REPO_FILTER
     inputType: FreeText
     defaultValue: all-events
@@ -12,13 +16,6 @@ variables:
   - name: GITHUB_API_URL
     inputType: FreeText
     defaultValue: http://github-firehose.libraries.io/events
-    required: true
-  - name: GITHUB_SSE_PATH
-    inputType: FreeText
-    defaultValue: /events
-    required: true
-  - name: GITHUB_AUTH_TOKEN
-    inputType: FreeText
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
