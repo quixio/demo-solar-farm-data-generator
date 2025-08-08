@@ -1,3 +1,9 @@
+"""
+This file defines a GoogleStorageBucketSource class that connects to a Google Cloud Storage bucket,
+reads files in specified formats (CSV, JSON, or text), processes their content, and produces messages
+to a streaming application. It handles authentication, file retrieval, and message serialization.
+"""
+
 import os
 import json
 import csv
@@ -43,13 +49,14 @@ class GoogleStorageBucketSource(Source):
             credentials = service_account.Credentials.from_service_account_info(
                 credentials_info
             )
+            logger.debug("Credentials loaded from JSON")
             return storage.Client(credentials=credentials, project=self.project_id)
 
         credentials_path = (
             os.getenv("GS_SECRET_PATH") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         )
         if credentials_path and os.path.exists(credentials_path):
-            logger.info("Using credentials file")
+            logger.info("Using credentials file at: %s", credentials_path)
             return storage.Client.from_service_account_json(
                 credentials_path, project=self.project_id
             )
@@ -60,15 +67,16 @@ class GoogleStorageBucketSource(Source):
     def setup(self):
         """Setup the Google Cloud Storage client and test connection."""
         try:
+            logger.info("Building Google Cloud Storage client")
             self.client = self._build_client()
             self.bucket = self.client.bucket(self.bucket_name)
             
             # Test connection
-            self.bucket.exists()
-            logger.info(
-                "Successfully connected to Google Cloud Storage bucket: %s",
-                self.bucket_name,
-            )
+            if self.bucket.exists():
+                logger.info("Successfully connected to Google Cloud Storage bucket: %s", self.bucket_name)
+            else:
+                logger.error("Bucket %s does not exist", self.bucket_name)
+                raise Exception("Bucket does not exist")
 
             if hasattr(self, "on_client_connect_success") and callable(self.on_client_connect_success):
                 self.on_client_connect_success()
@@ -83,6 +91,7 @@ class GoogleStorageBucketSource(Source):
         """Main processing loop to read files from Google Storage bucket."""
         try:
             prefix = self.folder_path + '/' if self.folder_path else ''
+            logger.info("Listing blobs in bucket with prefix: %s", prefix)
             blobs = list(self.bucket.list_blobs(prefix=prefix))
             
             if not blobs:
@@ -104,6 +113,7 @@ class GoogleStorageBucketSource(Source):
 
             for blob in target_files:
                 if not self.running or self.messages_processed >= self.max_messages:
+                    logger.info("Stopping processing as max messages reached or not running")
                     break
                 
                 logger.info("Processing file: %s", blob.name)
@@ -118,13 +128,17 @@ class GoogleStorageBucketSource(Source):
     def _process_file(self, blob):
         """Process a single file from the bucket."""
         try:
+            logger.info("Downloading content from blob: %s", blob.name)
             content = blob.download_as_bytes()
             
             if self.file_format == 'csv':
+                logger.info("Processing CSV content from: %s", blob.name)
                 self._process_csv_content(content, blob.name)
             elif self.file_format == 'json':
+                logger.info("Processing JSON content from: %s", blob.name)
                 self._process_json_content(content, blob.name)
             else:
+                logger.info("Processing text content from: %s", blob.name)
                 self._process_text_content(content, blob.name)
                 
         except Exception as e:
@@ -134,10 +148,12 @@ class GoogleStorageBucketSource(Source):
         """Process CSV content and produce messages."""
         try:
             content_str = content.decode('utf-8')
+            logger.debug("CSV content decoded for file: %s", filename)
             csv_reader = csv.DictReader(io.StringIO(content_str))
             
             for row in csv_reader:
                 if not self.running or self.messages_processed >= self.max_messages:
+                    logger.info("Stopping CSV processing as max messages reached or not running")
                     break
                 
                 # Transform the CSV row based on the schema
@@ -170,24 +186,29 @@ class GoogleStorageBucketSource(Source):
         """Process JSON content and produce messages."""
         try:
             content_str = content.decode('utf-8')
+            logger.debug("JSON content decoded for file: %s", filename)
             
             try:
                 # Try to parse as JSON array
                 json_data = json.loads(content_str)
                 if isinstance(json_data, list):
+                    logger.info("Processing JSON array from: %s", filename)
                     for item in json_data:
                         if not self.running or self.messages_processed >= self.max_messages:
+                            logger.info("Stopping JSON processing as max messages reached or not running")
                             break
                         self._produce_json_message(item, filename)
                 else:
-                    # Single JSON object
+                    logger.info("Processing single JSON object from: %s", filename)
                     self._produce_json_message(json_data, filename)
                     
             except json.JSONDecodeError:
+                logger.info("Attempting to parse as JSONL from: %s", filename)
                 # Try to parse as JSONL (newline-delimited JSON)
                 lines = content_str.strip().split('\n')
                 for line in lines:
                     if not self.running or self.messages_processed >= self.max_messages:
+                        logger.info("Stopping JSONL processing as max messages reached or not running")
                         break
                     if line.strip():
                         try:
@@ -220,10 +241,12 @@ class GoogleStorageBucketSource(Source):
         """Process text content and produce messages."""
         try:
             content_str = content.decode('utf-8')
+            logger.debug("Text content decoded for file: %s", filename)
             lines = content_str.split('\n')
             
             for line in lines:
                 if not self.running or self.messages_processed >= self.max_messages:
+                    logger.info("Stopping text processing as max messages reached or not running")
                     break
                 if line.strip():
                     message_value = {
