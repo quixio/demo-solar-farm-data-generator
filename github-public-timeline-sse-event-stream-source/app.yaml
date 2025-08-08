@@ -15,7 +15,8 @@ variables:
     required: true
   - name: GITHUB_API_URL
     inputType: FreeText
-    defaultValue: http://github-firehose.libraries.io/events
+    multiline: false
+    defaultValue: http://github-firehose.libraries.io
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
