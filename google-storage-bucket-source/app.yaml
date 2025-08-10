@@ -21,6 +21,9 @@ variables:
     inputType: Secret
     defaultValue: GCLOUD_PK_JSON
     required: true
+  - name: output
+    inputType: OutputTopic
+    multiline: false
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
