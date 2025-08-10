@@ -321,3 +321,4 @@ topics:
   - name: solar-farm
   - name: input
   - name: output
+  - name: bucket-output
