@@ -300,6 +300,9 @@ def main():
         file_compression=file_compression,
     )
 
+    # Setup the source before running
+    source.setup()
+
     # Create streaming dataframe
     sdf = app.dataframe(topic=output_topic, source=source)
     sdf.print(metadata=True)
