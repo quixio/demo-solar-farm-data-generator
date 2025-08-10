@@ -24,6 +24,7 @@ variables:
   - name: output
     inputType: OutputTopic
     multiline: false
+    defaultValue: bucket-output
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
