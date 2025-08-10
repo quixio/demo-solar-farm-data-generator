@@ -61,8 +61,8 @@ class GoogleStorageBucketSource(Source):
                 credentials_path, project=self.project_id
             )
 
-        logger.info("Using application-default credentials")
-        return storage.Client(project=self.project_id)
+        logger.error("No valid credentials found. Please set up Application Default Credentials.")
+        raise Exception("No valid credentials found.")
 
     def setup(self):
         """Setup the Google Cloud Storage client and test connection."""
