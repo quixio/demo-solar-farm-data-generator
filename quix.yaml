@@ -44,48 +44,6 @@ deployments:
         description: The location of the solar farm
         required: true
         value: LONDON
-  - name: HiveMQ Sink
-    application: hivemq-sink
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 200
-      replicas: 1
-    variables:
-      - name: input
-        inputType: InputTopic
-        description: Name of the input topic to listen to.
-        required: true
-        value: solar-data
-      - name: mqtt_topic_root
-        inputType: FreeText
-        description: The root for messages in MQTT, this can be anything
-        required: true
-        value: solar-data
-      - name: mqtt_server
-        inputType: FreeText
-        description: The address of your MQTT server
-        required: true
-        value: 8c070f88f569419db9771e183412ba13.s1.eu.hivemq.cloud
-      - name: mqtt_port
-        inputType: FreeText
-        description: The port of your MQTT server
-        required: true
-        value: 8883
-      - name: mqtt_username
-        inputType: FreeText
-        description: Username of your MQTT user
-        value: solar
-      - name: mqtt_password
-        inputType: HiddenText
-        description: Password for the MQTT user
-        value: Solar1000000
-      - name: mqtt_version
-        inputType: FreeText
-        description: 'MQTT protocol version: 3.1, 3.1.1, 5'
-        required: true
-        value: 3.1.1
   - name: postgreSQL
     application: postgresql
     version: latest
