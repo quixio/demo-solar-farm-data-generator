@@ -169,5 +169,4 @@ deployments:
 topics:
   - name: configuration
   - name: solar-data
-  - name: input
   - name: bucket-output
