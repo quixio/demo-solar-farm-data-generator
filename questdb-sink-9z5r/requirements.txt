@@ -1,4 +1,0 @@
-quixstreams[influxdb3]
-python-dotenv
-quixstreams
-questdb
