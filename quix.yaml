@@ -170,5 +170,4 @@ topics:
   - name: configuration
   - name: solar-data
   - name: input
-  - name: output
   - name: bucket-output
