@@ -36,6 +36,18 @@ variables:
     description: The type of file compression used for the files
     defaultValue: gzip
     required: true
+  - name: GOOGLE_STORAGE_FILE_COMPRESSION
+    inputType: FreeText
+  - name: GOOGLE_STORAGE_REGION
+    inputType: FreeText
+  - name: GOOGLE_STORAGE_FILE_FORMAT
+    inputType: FreeText
+  - name: GOOGLE_STORAGE_SECRET_KEY
+    inputType: FreeText
+  - name: GOOGLE_STORAGE_BUCKET
+    inputType: FreeText
+  - name: GOOGLE_STORAGE_FOLDER_PATH
+    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
