@@ -39,14 +39,8 @@ variables:
     inputType: FreeText
     defaultValue: default
     required: true
-  - name: CLICKHOUSE_USER
+  - name: CLICKHOUSE_USERNAME
     inputType: FreeText
-    multiline: false
-    defaultValue: clickadmin
-  - name: CLICKHOUSE_PASSWORD
-    inputType: Secret
-    multiline: false
-    defaultValue: CLICKHOUSE_SECRET_KEY
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
