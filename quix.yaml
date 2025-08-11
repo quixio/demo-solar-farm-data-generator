@@ -170,3 +170,6 @@ topics:
   - name: configuration
   - name: solar-data
   - name: bucket-output
+  - name: badboy
+    configuration:
+      partitions: 1
