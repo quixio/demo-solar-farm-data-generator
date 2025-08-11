@@ -36,6 +36,30 @@ variables:
     description: The type of file compression used for the files
     defaultValue: gzip
     required: true
+  - name: GOOGLE_STORAGE_BUCKET
+    inputType: FreeText
+    defaultValue: quix-workflow
+    required: true
+  - name: GOOGLE_STORAGE_REGION
+    inputType: FreeText
+    defaultValue: US-CENTRAL1
+    required: true
+  - name: GOOGLE_STORAGE_SECRET_KEY
+    inputType: Secret
+    defaultValue: GCLOUD_PK_JSON
+    required: true
+  - name: GOOGLE_STORAGE_FOLDER_PATH
+    inputType: FreeText
+    defaultValue: /
+    required: true
+  - name: GOOGLE_STORAGE_FILE_FORMAT
+    inputType: FreeText
+    defaultValue: csv
+    required: true
+  - name: GOOGLE_STORAGE_FILE_COMPRESSION
+    inputType: FreeText
+    defaultValue: none
+    required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
