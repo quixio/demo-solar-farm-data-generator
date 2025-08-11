@@ -1,5 +1,0 @@
-quixstreams
-python-dotenv
-google-cloud-storage
-pandas
-google-cloud-secret-manager
