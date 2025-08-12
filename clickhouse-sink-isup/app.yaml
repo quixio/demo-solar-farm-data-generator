@@ -34,12 +34,6 @@ variables:
     inputType: FreeText
     defaultValue: clickhouse-test
     required: true
-  - name: CLICKHOUSE_TOKEN_KEY
-    inputType: Secret
-    defaultValue: CLICKHOUSE_SECRET_KEY
-    required: true
-  - name: CLICKHOUSE_USERNAME
-    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
