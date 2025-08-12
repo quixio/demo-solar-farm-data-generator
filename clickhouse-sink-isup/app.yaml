@@ -36,6 +36,8 @@ variables:
     required: true
   - name: CLICKHOUSE_USERNAME
     inputType: FreeText
+    multiline: false
+    defaultValue: clickadmin
   - name: CLICKHOUSE_PASSWORD
     inputType: FreeText
 dockerfile: dockerfile
