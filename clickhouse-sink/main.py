@@ -146,7 +146,7 @@ CLICKHOUSE_HOST = os.environ.get('CLICKHOUSE_HOST', 'localhost')
 CLICKHOUSE_DATABASE = os.environ.get('CLICKHOUSE_DATABASE', 'default')
 CLICKHOUSE_TABLE = os.environ.get('CLICKHOUSE_TABLE', 'solar_readings')
 CLICKHOUSE_USERNAME = os.environ.get('CLICKHOUSE_USERNAME', 'default')
-CLICKHOUSE_TOKEN_KEY = os.environ.get('CLICKHOUSE_TOKEN_KEY')
+CLICKHOUSE_PASSWORD = os.environ.get('CLICKHOUSE_PASSWORD')  # Changed from CLICKHOUSE_TOKEN_KEY to CLICKHOUSE_PASSWORD
 
 try:
     BUFFER_SIZE = int(os.environ.get('CLICKHOUSE_BUFFER_SIZE', '1000'))
@@ -166,7 +166,7 @@ sink = ClickHouseSink(
     database=CLICKHOUSE_DATABASE,
     table=CLICKHOUSE_TABLE,
     username=CLICKHOUSE_USERNAME,
-    password=CLICKHOUSE_TOKEN_KEY,
+    password=CLICKHOUSE_PASSWORD,  # Use the correct environment variable for password
 )
 
 app = Application(
