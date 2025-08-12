@@ -164,43 +164,6 @@ deployments:
           targetPort: 9000
         - port: 8123
           targetPort: 8123
-  - name: google storage bucket-deployment-hffg
-    application: google-storage-bucket-source-s553
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
-    variables:
-      - name: output
-        inputType: OutputTopic
-        required: true
-        value: bucket-output
-      - name: GOOGLE_STORAGE_FOLDER_PATH
-        inputType: FreeText
-        required: true
-        value: /
-      - name: GOOGLE_STORAGE_REGION
-        inputType: FreeText
-        required: true
-        value: US-CENTRAL1
-      - name: GOOGLE_STORAGE_SECRET_KEY
-        inputType: Secret
-        required: true
-        secretKey: GCLOUD_PK_JSON
-      - name: GOOGLE_STORAGE_BUCKET
-        inputType: FreeText
-        required: true
-        value: quix-workflow
-      - name: GOOGLE_STORAGE_FILE_FORMAT
-        inputType: FreeText
-        required: true
-        value: csv
-      - name: GOOGLE_STORAGE_FILE_COMPRESSION
-        inputType: FreeText
-        required: true
-        value: none
 
 # This section describes the Topics of the data pipeline
 topics:
