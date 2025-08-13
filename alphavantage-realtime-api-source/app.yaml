@@ -4,7 +4,15 @@ variables:
   - name: output
     inputType: OutputTopic
     description: This is the output topic for hello world data
-    defaultValue: http-source
+    defaultValue: stock-data
+    required: true
+  - name: ALPHAVANTAGE_API_URL
+    inputType: FreeText
+    defaultValue: https://www.alphavantage.co
+    required: true
+  - name: ALPHAVANTAGE_API_KEY
+    inputType: Secret
+    defaultValue: AV_API_KEY
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
