@@ -1,160 +1,194 @@
-# DEPENDENCIES:
-# pip install requests
-# pip install python-dotenv
-# END_DEPENDENCIES
-
 import os
-import json
 import time
+import json
 import requests
 from datetime import datetime
-from dotenv import load_dotenv
+from typing import Optional, Dict, Any
+from quixstreams import Application
+from quixstreams.sources.base import Source
 
-# Load environment variables
-load_dotenv()
-
-def connect_to_alphavantage():
-    """
-    Connect to Alpha Vantage API and fetch sample stock data
-    """
-    
-    # Get environment variables
-    api_key = os.environ.get('ALPHAVANTAGE_API_KEY')
-    api_url = os.environ.get('ALPHAVANTAGE_API_URL', 'https://www.alphavantage.co')
-    
-    if not api_key:
-        raise ValueError("ALPHAVANTAGE_API_KEY environment variable is not set")
-    
-    # List of popular stock symbols to fetch data for
-    symbols = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 
-               'META', 'NVDA', 'JPM', 'V', 'WMT']
-    
-    print("=" * 60)
-    print("Alpha Vantage API Connection Test")
-    print("=" * 60)
-    print(f"API URL: {api_url}")
-    print(f"Fetching data for 10 stock symbols...")
-    print("=" * 60)
-    
-    items_fetched = 0
-    
-    for symbol in symbols:
-        if items_fetched >= 10:
-            break
-            
+class AlphaVantageSource(Source):
+    def __init__(
+        self,
+        api_key: str,
+        api_url: str,
+        symbols: list = None,
+        interval: str = "5min",
+        rate_limit_delay: int = 12,
+        name: str = "alphavantage-source"
+    ):
+        super().__init__(name=name)
+        self.api_key = api_key
+        self.api_url = api_url
+        self.symbols = symbols or ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 
+                                   'META', 'NVDA', 'JPM', 'V', 'WMT']
+        self.interval = interval
+        self.rate_limit_delay = rate_limit_delay
+        self.messages_produced = 0
+        self.max_messages = 100
+        
+    def setup(self):
+        """Test the API connection during setup"""
         try:
-            # Construct the API endpoint for intraday data
-            endpoint = f"{api_url}/query"
+            test_endpoint = f"{self.api_url}/query"
+            test_params = {
+                'function': 'TIME_SERIES_INTRADAY',
+                'symbol': 'AAPL',
+                'interval': '5min',
+                'apikey': self.api_key,
+                'outputsize': 'compact'
+            }
+            response = requests.get(test_endpoint, params=test_params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
             
-            # Parameters for the API call
+            if 'Error Message' in data:
+                raise ValueError(f"API Error: {data['Error Message']}")
+            
+            if 'Note' in data:
+                self.logger.warning(f"API Note: {data['Note']}")
+            
+            self.logger.info("Successfully connected to Alpha Vantage API")
+            if hasattr(self, 'on_client_connect_success'):
+                self.on_client_connect_success()
+                
+        except Exception as e:
+            self.logger.error(f"Failed to connect to Alpha Vantage API: {str(e)}")
+            if hasattr(self, 'on_client_connect_failure'):
+                self.on_client_connect_failure(e)
+            raise
+    
+    def fetch_stock_data(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Fetch stock data for a given symbol"""
+        try:
+            endpoint = f"{self.api_url}/query"
             params = {
                 'function': 'TIME_SERIES_INTRADAY',
                 'symbol': symbol,
-                'interval': '5min',
-                'apikey': api_key,
-                'outputsize': 'compact'  # Get only the latest 100 data points
+                'interval': self.interval,
+                'apikey': self.api_key,
+                'outputsize': 'compact'
             }
             
-            print(f"\nFetching data for {symbol}...")
-            
-            # Make the API request
             response = requests.get(endpoint, params=params, timeout=10)
             response.raise_for_status()
             
-            # Parse the JSON response
             data = response.json()
             
-            # Check for API errors
             if 'Error Message' in data:
-                print(f"API Error for {symbol}: {data['Error Message']}")
-                continue
+                self.logger.error(f"API Error for {symbol}: {data['Error Message']}")
+                return None
             
             if 'Note' in data:
-                print(f"API Note: {data['Note']}")
-                # API rate limit reached, wait a bit
-                time.sleep(12)  # Alpha Vantage free tier has 5 calls/minute limit
-                continue
+                self.logger.warning(f"API rate limit reached: {data['Note']}")
+                time.sleep(self.rate_limit_delay * 2)
+                return None
             
-            # Extract the latest data point
-            if 'Time Series (5min)' in data:
-                time_series = data['Time Series (5min)']
-                meta_data = data.get('Meta Data', {})
-                
-                # Get the most recent timestamp
-                timestamps = list(time_series.keys())
-                if timestamps:
-                    latest_timestamp = timestamps[0]
-                    latest_data = time_series[latest_timestamp]
-                    
-                    # Create a structured item
-                    item = {
-                        'item_number': items_fetched + 1,
-                        'symbol': symbol,
-                        'timestamp': latest_timestamp,
-                        'last_refreshed': meta_data.get('3. Last Refreshed', 'N/A'),
-                        'time_zone': meta_data.get('6. Time Zone', 'N/A'),
-                        'open': float(latest_data.get('1. open', 0)),
-                        'high': float(latest_data.get('2. high', 0)),
-                        'low': float(latest_data.get('3. low', 0)),
-                        'close': float(latest_data.get('4. close', 0)),
-                        'volume': int(latest_data.get('5. volume', 0))
-                    }
-                    
-                    items_fetched += 1
-                    
-                    # Print the item
-                    print(f"\n--- Item {items_fetched} ---")
-                    print(json.dumps(item, indent=2))
-                else:
-                    print(f"No time series data available for {symbol}")
-            else:
-                print(f"Unexpected response format for {symbol}")
-                print(f"Available keys: {list(data.keys())}")
+            if 'Time Series (5min)' not in data:
+                self.logger.warning(f"No time series data for {symbol}")
+                return None
             
-            # Rate limiting - Alpha Vantage free tier allows 5 API calls per minute
-            if items_fetched < 10:
-                print("\nWaiting 12 seconds to respect API rate limits...")
-                time.sleep(12)
-                
+            time_series = data['Time Series (5min)']
+            meta_data = data.get('Meta Data', {})
+            
+            timestamps = list(time_series.keys())
+            if not timestamps:
+                return None
+            
+            latest_timestamp = timestamps[0]
+            latest_data = time_series[latest_timestamp]
+            
+            return {
+                'item_number': self.messages_produced + 1,
+                'symbol': symbol,
+                'timestamp': latest_timestamp,
+                'last_refreshed': meta_data.get('3. Last Refreshed', latest_timestamp),
+                'time_zone': meta_data.get('6. Time Zone', 'US/Eastern'),
+                'open': float(latest_data.get('1. open', 0)),
+                'high': float(latest_data.get('2. high', 0)),
+                'low': float(latest_data.get('3. low', 0)),
+                'close': float(latest_data.get('4. close', 0)),
+                'volume': int(latest_data.get('5. volume', 0))
+            }
+            
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching data for {symbol}: {str(e)}")
-            continue
+            self.logger.error(f"Request error for {symbol}: {str(e)}")
+            return None
         except json.JSONDecodeError as e:
-            print(f"Error parsing JSON response for {symbol}: {str(e)}")
-            continue
+            self.logger.error(f"JSON decode error for {symbol}: {str(e)}")
+            return None
         except Exception as e:
-            print(f"Unexpected error for {symbol}: {str(e)}")
-            continue
+            self.logger.error(f"Unexpected error for {symbol}: {str(e)}")
+            return None
     
-    print("\n" + "=" * 60)
-    print(f"Connection test completed. Fetched {items_fetched} items.")
-    print("=" * 60)
-    
-    return items_fetched
+    def run(self):
+        """Main run loop for the source"""
+        self.logger.info(f"Starting Alpha Vantage source with symbols: {self.symbols}")
+        
+        symbol_index = 0
+        
+        while self.running and self.messages_produced < self.max_messages:
+            try:
+                symbol = self.symbols[symbol_index % len(self.symbols)]
+                
+                stock_data = self.fetch_stock_data(symbol)
+                
+                if stock_data:
+                    msg = self.serialize(
+                        key=f"{symbol}_{stock_data['timestamp']}",
+                        value=stock_data
+                    )
+                    
+                    self.produce(
+                        key=msg.key,
+                        value=msg.value
+                    )
+                    
+                    self.messages_produced += 1
+                    self.logger.info(f"Produced message {self.messages_produced}/{self.max_messages} for {symbol}")
+                    
+                    if self.messages_produced >= self.max_messages:
+                        self.logger.info(f"Reached maximum message limit of {self.max_messages}")
+                        break
+                
+                symbol_index += 1
+                
+                if self.running and self.messages_produced < self.max_messages:
+                    time.sleep(self.rate_limit_delay)
+                    
+            except Exception as e:
+                self.logger.error(f"Error in run loop: {str(e)}")
+                time.sleep(self.rate_limit_delay)
+                continue
+        
+        self.logger.info("Alpha Vantage source stopped")
 
 def main():
-    """
-    Main function to run the connection test
-    """
-    try:
-        # Test the connection and fetch sample data
-        items_count = connect_to_alphavantage()
-        
-        if items_count == 0:
-            print("\nWARNING: No items were successfully fetched.")
-            print("Please check:")
-            print("1. Your API key is valid")
-            print("2. You haven't exceeded the API rate limits")
-            print("3. The stock market is open (data might be limited on weekends/holidays)")
-            return 1
-        
-        return 0
-        
-    except Exception as e:
-        print(f"\nFATAL ERROR: {str(e)}")
-        return 1
-    finally:
-        print("\nConnection test finished.")
+    app = Application()
+    
+    api_key = os.environ.get('ALPHAVANTAGE_API_KEY')
+    if not api_key:
+        raise ValueError("ALPHAVANTAGE_API_KEY environment variable is not set")
+    
+    api_url = os.environ.get('ALPHAVANTAGE_API_URL', 'https://www.alphavantage.co')
+    
+    source = AlphaVantageSource(
+        api_key=api_key,
+        api_url=api_url,
+        symbols=['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 
+                 'META', 'NVDA', 'JPM', 'V', 'WMT'],
+        interval="5min",
+        rate_limit_delay=12,
+        name="alphavantage-realtime-api-source"
+    )
+    
+    output_topic_name = os.environ.get('output', 'stock-data')
+    topic = app.topic(output_topic_name)
+    
+    sdf = app.dataframe(topic=topic, source=source)
+    sdf.print(metadata=True)
+    
+    app.run()
 
 if __name__ == "__main__":
-    exit(main())
+    main()
