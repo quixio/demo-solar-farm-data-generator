@@ -10,6 +10,11 @@ from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch, SinkBackpressureError
 import clickhouse_connect
 
+
+def strtobool(val: str) -> bool:
+    return str(val).strip().lower() in ("1", "true", "yes", "y")
+
+
 class ClickHouseSink(BatchingSink):
     def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
         super().__init__(
@@ -20,29 +25,51 @@ class ClickHouseSink(BatchingSink):
         self._table_created = False
 
     def setup(self):
-        try:
-            port = int(os.environ.get('CLICKHOUSE_PORT', '8123'))
-        except ValueError:
-            port = 8123
-            
-        self._client = clickhouse_connect.get_client(
-            host=os.environ.get('CLICKHOUSE_HOST'),
-            port=port,
-            database=os.environ.get('CLICKHOUSE_DATABASE'),
-            username=os.environ.get('CLICKHOUSE_USER'),
-            password=os.environ.get('CLICKHOUSE_PASSWORD')
-        )
+        host = os.environ.get("CLICKHOUSE_HOST", "localhost")
         
-        # Test connection
+        env_interface = os.environ.get("CLICKHOUSE_INTERFACE", "").strip().lower()
+        env_port = os.environ.get("CLICKHOUSE_PORT")
+
+        port = 8123
+        if env_port:
+            try:
+                port = int(env_port)
+            except ValueError:
+                port = 8123
+
+        if env_interface in ("http", "native"):
+            interface = env_interface
+        else:
+            interface = "native" if port == 9000 else "http"
+
+        secure = strtobool(os.environ.get("CLICKHOUSE_SECURE", "false"))
+        verify = strtobool(os.environ.get("CLICKHOUSE_VERIFY_TLS", "true"))
+
+        database = os.environ.get("CLICKHOUSE_DATABASE")
+        username = os.environ.get("CLICKHOUSE_USER")
+        password = os.environ.get("CLICKHOUSE_PASSWORD")
+
+        client_kwargs = {
+            "host": host,
+            "port": port,
+            "database": database,
+            "username": username,
+            "password": password,
+            "interface": interface,
+        }
+
+        if interface == "http":
+            client_kwargs["secure"] = secure
+            client_kwargs["verify"] = verify
+
+        self._client = clickhouse_connect.get_client(**client_kwargs)
         self._client.ping()
-        
-        # Create table if it doesn't exist
         self._create_table_if_not_exists()
 
     def _create_table_if_not_exists(self):
         if self._table_created:
             return
-            
+
         create_table_sql = """
         CREATE TABLE IF NOT EXISTS solar_panel_data (
             panel_id String,
@@ -71,72 +98,70 @@ class ClickHouseSink(BatchingSink):
         ) ENGINE = MergeTree()
         ORDER BY (panel_id, timestamp)
         """
-        
+
         self._client.command(create_table_sql)
         self._table_created = True
 
     def write(self, batch: SinkBatch):
         attempts_remaining = 3
-        
+
         while attempts_remaining:
             try:
                 data_rows = []
-                
+
                 for item in batch:
                     print(f'Raw message: {item}')
                     
-                    # Parse the JSON value field
                     if isinstance(item.value, str):
                         value_data = json.loads(item.value)
                     else:
                         value_data = item.value
-                    
-                    # Convert epoch timestamp to datetime
-                    panel_timestamp = datetime.fromtimestamp(value_data.get('timestamp', 0) / 1000000000)
-                    kafka_timestamp = datetime.fromtimestamp(item.timestamp / 1000)
-                    
-                    # Map message data to table schema
+
+                    panel_ts_ns = value_data.get("timestamp", 0)
+                    panel_timestamp = datetime.fromtimestamp(panel_ts_ns / 1_000_000_000)
+
+                    kafka_timestamp = datetime.fromtimestamp(item.timestamp / 1000) if item.timestamp else None
+
                     row = [
-                        value_data.get('panel_id', ''),
-                        value_data.get('location_id', ''),
-                        value_data.get('location_name', ''),
-                        value_data.get('latitude', 0.0),
-                        value_data.get('longitude', 0.0),
-                        value_data.get('timezone', 0),
-                        value_data.get('power_output', 0.0),
-                        value_data.get('unit_power', ''),
-                        value_data.get('temperature', 0.0),
-                        value_data.get('unit_temp', ''),
-                        value_data.get('irradiance', 0.0),
-                        value_data.get('unit_irradiance', ''),
-                        value_data.get('voltage', 0.0),
-                        value_data.get('unit_voltage', ''),
-                        value_data.get('current', 0.0),
-                        value_data.get('unit_current', ''),
-                        value_data.get('inverter_status', ''),
+                        value_data.get("panel_id", ""),
+                        value_data.get("location_id", ""),
+                        value_data.get("location_name", ""),
+                        float(value_data.get("latitude", 0.0) or 0.0),
+                        float(value_data.get("longitude", 0.0) or 0.0),
+                        int(value_data.get("timezone", 0) or 0),
+                        float(value_data.get("power_output", 0.0) or 0.0),
+                        value_data.get("unit_power", ""),
+                        float(value_data.get("temperature", 0.0) or 0.0),
+                        value_data.get("unit_temp", ""),
+                        float(value_data.get("irradiance", 0.0) or 0.0),
+                        value_data.get("unit_irradiance", ""),
+                        float(value_data.get("voltage", 0.0) or 0.0),
+                        value_data.get("unit_voltage", ""),
+                        float(value_data.get("current", 0.0) or 0.0),
+                        value_data.get("unit_current", ""),
+                        value_data.get("inverter_status", ""),
                         panel_timestamp,
                         kafka_timestamp,
-                        str(item.key) if item.key else '',
+                        str(item.key) if item.key is not None else "",
                         item.topic,
-                        item.partition,
-                        item.offset
+                        int(item.partition) if item.partition is not None else 0,
+                        int(item.offset) if item.offset is not None else 0,
                     ]
                     data_rows.append(row)
-                
-                # Insert data into ClickHouse
+
                 self._client.insert(
-                    'solar_panel_data',
+                    "solar_panel_data",
                     data_rows,
                     column_names=[
-                        'panel_id', 'location_id', 'location_name', 'latitude', 'longitude',
-                        'timezone', 'power_output', 'unit_power', 'temperature', 'unit_temp',
-                        'irradiance', 'unit_irradiance', 'voltage', 'unit_voltage', 'current',
-                        'unit_current', 'inverter_status', 'timestamp', 'kafka_timestamp',
-                        'kafka_key', 'kafka_topic', 'kafka_partition', 'kafka_offset'
-                    ]
+                        "panel_id", "location_id", "location_name", "latitude", "longitude",
+                        "timezone", "power_output", "unit_power", "temperature", "unit_temp",
+                        "irradiance", "unit_irradiance", "voltage", "unit_voltage", "current",
+                        "unit_current", "inverter_status", "timestamp", "kafka_timestamp",
+                        "kafka_key", "kafka_topic", "kafka_partition", "kafka_offset"
+                    ],
                 )
                 return
-                
+
             except ConnectionError:
                 attempts_remaining -= 1
                 if attempts_remaining:
@@ -147,24 +172,25 @@ class ClickHouseSink(BatchingSink):
                     topic=batch.topic,
                     partition=batch.partition,
                 )
-        
+
         raise Exception("Error while writing to ClickHouse")
 
 def main():
     app = Application(
         consumer_group="clickhouse_sink_consumer",
         auto_create_topics=True,
-        auto_offset_reset="earliest"
+        auto_offset_reset="earliest",
     )
-    
+
     clickhouse_sink = ClickHouseSink()
     input_topic = app.topic(name=os.environ["input"])
     sdf = app.dataframe(topic=input_topic)
-    
+
     sdf = sdf.apply(lambda row: row).print(metadata=True)
     sdf.sink(clickhouse_sink)
-    
+
     app.run(count=10, timeout=20)
+
 
 if __name__ == "__main__":
     main()
