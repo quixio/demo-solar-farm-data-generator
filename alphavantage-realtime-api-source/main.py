@@ -1,123 +1,185 @@
-# DEPENDENCIES:
-# pip install requests
-# pip install python-dotenv
-# END_DEPENDENCIES
-
 import os
 import json
 import time
-from datetime import datetime
+import logging
 import requests
-from dotenv import load_dotenv
+from datetime import datetime
+from typing import Optional, Dict, Any
+from quixstreams import Application
+from quixstreams.sources.base import Source
 
-# Load environment variables
-load_dotenv()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def test_alphavantage_connection():
-    """
-    Test connection to Alpha Vantage API and fetch 10 sample data points
-    """
-    
-    # Get environment variables
-    api_key = os.environ.get('ALPHAVANTAGE_API_KEY')
-    api_url = os.environ.get('ALPHAVANTAGE_API_URL', 'https://www.alphavantage.co')
-    
-    if not api_key:
-        print("Error: ALPHAVANTAGE_API_KEY environment variable not set")
-        return
-    
-    # List of popular stock symbols to fetch data for
-    symbols = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 
-               'META', 'NVDA', 'JPM', 'V', 'WMT']
-    
-    print("=" * 60)
-    print("Testing Alpha Vantage API Connection")
-    print("=" * 60)
-    print(f"API URL: {api_url}")
-    print(f"Fetching real-time data for 10 stock symbols...")
-    print("=" * 60)
-    
-    successful_reads = 0
-    
-    for i, symbol in enumerate(symbols, 1):
+class AlphaVantageSource(Source):
+    def __init__(
+        self,
+        api_key: str,
+        api_url: str,
+        symbols: list = None,
+        poll_interval: int = 12,
+        name: str = "alphavantage-source"
+    ):
+        super().__init__(name=name)
+        self.api_key = api_key
+        self.api_url = api_url
+        self.symbols = symbols or ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'META', 'NVDA', 'JPM', 'V', 'WMT']
+        self.poll_interval = poll_interval
+        self.message_count = 0
+        self.max_messages = 100
+        
+    def setup(self):
+        """Test the API connection during setup"""
         try:
-            # Construct the API endpoint for real-time quote data
-            endpoint = f"{api_url}/query"
-            
-            # Parameters for GLOBAL_QUOTE endpoint (real-time price data)
+            endpoint = f"{self.api_url}/query"
             params = {
                 'function': 'GLOBAL_QUOTE',
-                'symbol': symbol,
-                'apikey': api_key
+                'symbol': 'AAPL',
+                'apikey': self.api_key
             }
-            
-            print(f"\n[{i}/10] Fetching data for {symbol}...")
-            
-            # Make the API request
             response = requests.get(endpoint, params=params, timeout=10)
-            
-            # Check if request was successful
             if response.status_code == 200:
                 data = response.json()
-                
-                # Check for API errors
                 if 'Error Message' in data:
-                    print(f"  ❌ API Error: {data['Error Message']}")
-                    continue
-                elif 'Note' in data:
-                    print(f"  ⚠️  API Note: {data['Note'][:100]}...")
-                    # API rate limit reached, wait a bit
-                    print("  Waiting 15 seconds due to rate limit...")
-                    time.sleep(15)
-                    continue
+                    logger.error(f"API Error during setup: {data['Error Message']}")
+                    if self.on_client_connect_failure:
+                        self.on_client_connect_failure(Exception(data['Error Message']))
                 elif 'Global Quote' in data and data['Global Quote']:
-                    quote = data['Global Quote']
-                    
-                    # Format and print the data
-                    print(f"  ✓ Successfully retrieved data:")
-                    print(f"    Symbol: {quote.get('01. symbol', 'N/A')}")
-                    print(f"    Price: ${quote.get('05. price', 'N/A')}")
-                    print(f"    Change: {quote.get('09. change', 'N/A')} ({quote.get('10. change percent', 'N/A')})")
-                    print(f"    Volume: {quote.get('06. volume', 'N/A')}")
-                    print(f"    Latest Trading Day: {quote.get('07. latest trading day', 'N/A')}")
-                    print(f"    Previous Close: ${quote.get('08. previous close', 'N/A')}")
-                    print(f"    Open: ${quote.get('02. open', 'N/A')}")
-                    print(f"    High: ${quote.get('03. high', 'N/A')}")
-                    print(f"    Low: ${quote.get('04. low', 'N/A')}")
-                    
-                    successful_reads += 1
+                    logger.info("Successfully connected to Alpha Vantage API")
+                    if self.on_client_connect_success:
+                        self.on_client_connect_success()
                 else:
-                    print(f"  ⚠️  No data available for {symbol}")
-                    print(f"  Response: {json.dumps(data, indent=2)[:200]}...")
-                    
+                    logger.warning("API connection test returned unexpected response")
             else:
-                print(f"  ❌ HTTP Error {response.status_code}: {response.text[:100]}")
-                
-        except requests.exceptions.Timeout:
-            print(f"  ❌ Request timeout for {symbol}")
-        except requests.exceptions.ConnectionError as e:
-            print(f"  ❌ Connection error for {symbol}: {str(e)[:100]}")
-        except json.JSONDecodeError:
-            print(f"  ❌ Invalid JSON response for {symbol}")
+                error_msg = f"API connection failed with status {response.status_code}"
+                logger.error(error_msg)
+                if self.on_client_connect_failure:
+                    self.on_client_connect_failure(Exception(error_msg))
         except Exception as e:
-            print(f"  ❌ Unexpected error for {symbol}: {str(e)[:100]}")
+            logger.error(f"Failed to connect to Alpha Vantage API: {str(e)}")
+            if self.on_client_connect_failure:
+                self.on_client_connect_failure(e)
+    
+    def run(self):
+        """Main loop to fetch stock data from Alpha Vantage API"""
+        symbol_index = 0
         
-        # Add a small delay between requests to respect rate limits
-        # Alpha Vantage free tier allows 5 API requests per minute
-        if i < len(symbols):
-            time.sleep(12)  # Wait 12 seconds between requests (5 requests per minute)
+        while self.running and self.message_count < self.max_messages:
+            try:
+                symbol = self.symbols[symbol_index % len(self.symbols)]
+                
+                endpoint = f"{self.api_url}/query"
+                params = {
+                    'function': 'GLOBAL_QUOTE',
+                    'symbol': symbol,
+                    'apikey': self.api_key
+                }
+                
+                logger.info(f"Fetching data for {symbol}...")
+                
+                response = requests.get(endpoint, params=params, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    if 'Error Message' in data:
+                        logger.error(f"API Error for {symbol}: {data['Error Message']}")
+                    elif 'Note' in data:
+                        logger.warning(f"API rate limit reached, waiting 60 seconds...")
+                        time.sleep(60)
+                        continue
+                    elif 'Global Quote' in data and data['Global Quote']:
+                        quote = data['Global Quote']
+                        
+                        if quote:
+                            message = self.transform_to_kafka_format(quote)
+                            
+                            if message:
+                                serialized = self.serialize(
+                                    key=message['symbol'],
+                                    value=message
+                                )
+                                
+                                self.produce(
+                                    key=serialized.key,
+                                    value=serialized.value
+                                )
+                                
+                                self.message_count += 1
+                                logger.info(f"Produced message {self.message_count}/{self.max_messages} for {symbol}")
+                    else:
+                        logger.warning(f"No data available for {symbol}")
+                else:
+                    logger.error(f"HTTP Error {response.status_code} for {symbol}")
+                    
+            except requests.exceptions.Timeout:
+                logger.error(f"Request timeout for symbol at index {symbol_index}")
+            except requests.exceptions.ConnectionError as e:
+                logger.error(f"Connection error: {str(e)[:100]}")
+                time.sleep(5)
+            except Exception as e:
+                logger.error(f"Unexpected error: {str(e)[:100]}")
+                time.sleep(5)
+            
+            symbol_index += 1
+            
+            if self.running and self.message_count < self.max_messages:
+                time.sleep(self.poll_interval)
+        
+        logger.info(f"Source completed. Processed {self.message_count} messages")
     
-    print("\n" + "=" * 60)
-    print(f"Connection test completed: {successful_reads}/10 successful reads")
-    print("=" * 60)
+    def transform_to_kafka_format(self, quote: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Transform Alpha Vantage quote data to Kafka message format"""
+        try:
+            return {
+                "symbol": quote.get('01. symbol', ''),
+                "price": float(quote.get('05. price', 0)),
+                "change": float(quote.get('09. change', 0)),
+                "percentage_change": float(quote.get('10. change percent', '0%').rstrip('%')),
+                "volume": int(float(quote.get('06. volume', 0))),
+                "latest_trading_day": quote.get('07. latest trading day', ''),
+                "previous_close": float(quote.get('08. previous close', 0)),
+                "open": float(quote.get('02. open', 0)),
+                "high": float(quote.get('03. high', 0)),
+                "low": float(quote.get('04. low', 0)),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error transforming data: {str(e)[:100]}")
+            return None
+
+def main():
+    api_key = os.environ.get('ALPHAVANTAGE_API_KEY')
+    if not api_key:
+        raise ValueError("ALPHAVANTAGE_API_KEY environment variable is required")
     
-    if successful_reads == 0:
-        print("\n⚠️  No data was successfully retrieved.")
-        print("Possible issues:")
-        print("  - Invalid API key")
-        print("  - API rate limit exceeded (free tier: 5 requests/minute, 500 requests/day)")
-        print("  - Network connectivity issues")
-        print("  - API service temporarily unavailable")
+    api_url = os.environ.get('ALPHAVANTAGE_API_URL', 'https://www.alphavantage.co')
+    output_topic_name = os.environ.get('output', 'stock-data')
+    
+    app = Application(
+        consumer_group='alphavantage-realtime-api-source',
+        auto_offset_reset='latest'
+    )
+    
+    source = AlphaVantageSource(
+        api_key=api_key,
+        api_url=api_url,
+        name='alphavantage-source'
+    )
+    
+    topic = app.topic(
+        name=output_topic_name,
+        value_serializer='json'
+    )
+    
+    sdf = app.dataframe(topic=topic, source=source)
+    sdf.print(metadata=True)
+    
+    logger.info(f"Starting Alpha Vantage source application")
+    logger.info(f"Output topic: {output_topic_name}")
+    logger.info(f"API URL: {api_url}")
+    
+    app.run()
 
 if __name__ == "__main__":
-    test_alphavantage_connection()
+    main()
