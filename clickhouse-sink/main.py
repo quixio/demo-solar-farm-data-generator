@@ -1,47 +1,45 @@
-# Cached sandbox code for clickhouse
-# Generated on 2025-08-13 18:39:47
-# Template: Unknown
-# This is cached code - delete this file to force regeneration
-
-# DEPENDENCIES:
-# pip install clickhouse-driver
-# END_DEPENDENCIES
+# Cached sandbox code for ClickHouse
+# Dependencies:
+#   pip install clickhouse-driver
 
 import os
 import json
+from datetime import datetime
+
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch, SinkBackpressureError
 from clickhouse_driver import Client
-from datetime import datetime
+
 
 class ClickHouseSink(BatchingSink):
     def __init__(self, on_client_connect_success=None, on_client_connect_failure=None, **kwargs):
         super().__init__(
             on_client_connect_success=on_client_connect_success,
             on_client_connect_failure=on_client_connect_failure,
-            **kwargs
+            **kwargs,
         )
         self._client = None
         self._table_created = False
 
     def setup(self):
+        # Use the native protocol (9000 by default). 8123 is HTTP and will fail with clickhouse-driver.
         try:
-            port = int(os.environ.get('CLICKHOUSE_PORT', '9000'))
+            port = int(os.environ.get("CLICKHOUSE_PORT", "9000"))
         except ValueError:
             port = 9000
 
         self._client = Client(
-            host=os.environ.get('CLICKHOUSE_HOST', 'localhost'),
+            host=os.environ.get("CLICKHOUSE_HOST", "localhost"),
             port=port,
-            database=os.environ.get('CLICKHOUSE_DATABASE', 'default'),
-            user=os.environ.get('CLICKHOUSE_USER', 'default'),
-            password=os.environ.get('CLICKHOUSE_PASSWORD', '')
+            database=os.environ.get("CLICKHOUSE_DATABASE", "default"),
+            user=os.environ.get("CLICKHOUSE_USER", "default"),
+            password=os.environ.get("CLICKHOUSE_PASSWORD", ""),
         )
 
         # Test connection
-        self._client.execute('SELECT 1')
+        self._client.execute("SELECT 1")
 
-        # Call the correct success hook used by the base class
+        # Notify success via base-class hook (if provided)
         if callable(self._on_client_connect_success):
             self._on_client_connect_success()
 
@@ -77,7 +75,6 @@ class ClickHouseSink(BatchingSink):
         ) ENGINE = MergeTree()
         ORDER BY (location_id, panel_id, timestamp)
         """
-
         self._client.execute(create_table_sql)
         self._table_created = True
 
@@ -87,57 +84,64 @@ class ClickHouseSink(BatchingSink):
 
         rows = []
         for item in batch:
-            print(f'Raw message: {item}')
-
-            # Parse the JSON value string from the nested structure
+            # item is a SinkItem — metadata like topic/partition are on the batch, not the item.
             try:
-                # The message has a nested structure with 'value' field containing JSON string
-                if hasattr(item, 'value') and isinstance(item.value, str):
-                    data = json.loads(item.value)
-                elif hasattr(item, 'value') and isinstance(item.value, dict):
-                    # Check if it's the nested structure from the schema
-                    if 'value' in item.value and isinstance(item.value['value'], str):
-                        data = json.loads(item.value['value'])
+                v = getattr(item, "value", None)
+
+                # Handle possible nested formats
+                if isinstance(v, str):
+                    data = json.loads(v)
+                elif isinstance(v, dict):
+                    if "value" in v and isinstance(v["value"], str):
+                        data = json.loads(v["value"])
                     else:
-                        data = item.value
+                        data = v
                 else:
-                    data = item.value
+                    data = v if isinstance(v, dict) else {}
+
             except (json.JSONDecodeError, TypeError) as e:
                 print(f"Error parsing message value: {e}")
                 continue
 
-            # Convert epoch timestamp (assumed nanoseconds) to datetime
-            timestamp_ns = data.get('timestamp', 0)
-            timestamp_ms = timestamp_ns // 1_000_000  # ns -> ms
-            timestamp_dt = datetime.fromtimestamp(timestamp_ms / 1000.0)
+            # Timestamps
+            # payload 'timestamp' assumed to be epoch ns
+            timestamp_ns = 0
+            try:
+                timestamp_ns = int(data.get("timestamp", 0))
+            except Exception:
+                timestamp_ns = 0
+            timestamp_ms = timestamp_ns // 1_000_000
+            # Use UTC to avoid local skew; ClickHouse DateTime64 works fine with UTC
+            timestamp_dt = datetime.utcfromtimestamp(timestamp_ms / 1000.0) if timestamp_ms > 0 else datetime.utcfromtimestamp(0)
 
-            # Convert Kafka timestamp (ms) to datetime
-            kafka_timestamp_dt = datetime.fromtimestamp(item.timestamp / 1000.0)
+            # Kafka timestamp is ms since epoch
+            it_ts = getattr(item, "timestamp", 0) or 0
+            kafka_timestamp_dt = datetime.utcfromtimestamp(it_ts / 1000.0) if it_ts > 0 else datetime.utcfromtimestamp(0)
 
             row = (
-                data.get('panel_id', ''),
-                data.get('location_id', ''),
-                data.get('location_name', ''),
-                float(data.get('latitude', 0.0) or 0.0),
-                float(data.get('longitude', 0.0) or 0.0),
-                int(data.get('timezone', 0) or 0),
-                float(data.get('power_output', 0.0) or 0.0),
-                data.get('unit_power', ''),
-                float(data.get('temperature', 0.0) or 0.0),
-                data.get('unit_temp', ''),
-                float(data.get('irradiance', 0.0) or 0.0),
-                data.get('unit_irradiance', ''),
-                float(data.get('voltage', 0.0) or 0.0),
-                data.get('unit_voltage', ''),
-                float(data.get('current', 0.0) or 0.0),
-                data.get('unit_current', ''),
-                data.get('inverter_status', ''),
+                data.get("panel_id", "") or "",
+                data.get("location_id", "") or "",
+                data.get("location_name", "") or "",
+                float(data.get("latitude", 0.0) or 0.0),
+                float(data.get("longitude", 0.0) or 0.0),
+                int(data.get("timezone", 0) or 0),
+                float(data.get("power_output", 0.0) or 0.0),
+                data.get("unit_power", "") or "",
+                float(data.get("temperature", 0.0) or 0.0),
+                data.get("unit_temp", "") or "",
+                float(data.get("irradiance", 0.0) or 0.0),
+                data.get("unit_irradiance", "") or "",
+                float(data.get("voltage", 0.0) or 0.0),
+                data.get("unit_voltage", "") or "",
+                float(data.get("current", 0.0) or 0.0),
+                data.get("unit_current", "") or "",
+                data.get("inverter_status", "") or "",
                 timestamp_dt,
-                str(item.key) if item.key is not None else '',
+                (str(item.key) if getattr(item, "key", None) is not None else ""),
                 kafka_timestamp_dt,
-                item.topic,
-                item.partition,
-                item.offset
+                batch.topic,
+                batch.partition,
+                int(getattr(item, "offset", 0) or 0),
             )
             rows.append(row)
 
@@ -151,30 +155,35 @@ class ClickHouseSink(BatchingSink):
                     kafka_key, kafka_timestamp, kafka_topic, kafka_partition, kafka_offset
                 ) VALUES
                 """
+                # clickhouse-driver will expand the list of tuples
                 self._client.execute(insert_sql, rows)
             except Exception as e:
                 print(f"Error writing to ClickHouse: {e}")
+                # Signal backpressure so the framework can retry later
                 raise SinkBackpressureError(
                     retry_after=30.0,
                     topic=batch.topic,
                     partition=batch.partition,
                 )
 
+
 def main():
     app = Application(
         consumer_group="clickhouse_sink_consumer",
         auto_create_topics=True,
-        auto_offset_reset="earliest"
+        auto_offset_reset="earliest",
     )
 
     clickhouse_sink = ClickHouseSink()
-    input_topic = app.topic(name=os.environ["input"])
+    input_topic = app.topic(name=os.environ["input"])  # expects env var "input"
     sdf = app.dataframe(topic=input_topic)
 
+    # Keep the tap printing if you want; it helps debugging.
     sdf = sdf.apply(lambda row: row).print(metadata=True)
     sdf.sink(clickhouse_sink)
 
     app.run(count=10, timeout=20)
+
 
 if __name__ == "__main__":
     main()
