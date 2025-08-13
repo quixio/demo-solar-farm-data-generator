@@ -183,4 +183,4 @@ sdf = app.dataframe(input_topic)
 sdf.sink(clickhouse_sink)
 
 if __name__ == "__main__":
-    app.run(count=10, timeout=20)
+    app.run()
