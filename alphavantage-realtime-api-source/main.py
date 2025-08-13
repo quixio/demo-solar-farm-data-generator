@@ -47,12 +47,12 @@ class AlphaVantageSource(Source):
                 raise ValueError(f"API Error: {data['Error Message']}")
 
             if 'Note' in data:
-                self.log.warning(f"API Note: {data['Note']}")
+                self.logger.warning(f"API Note: {data['Note']}")
 
-            self.log.info("Successfully connected to Alpha Vantage API")
+            self.logger.info("Successfully connected to Alpha Vantage API")
 
         except Exception as e:
-            self.log.error(f"Failed to connect to Alpha Vantage API: {str(e)}")
+            self.logger.error(f"Failed to connect to Alpha Vantage API: {str(e)}")
             raise
 
     def fetch_stock_data(self, symbol: str) -> Optional[Dict[str, Any]]:
@@ -73,17 +73,17 @@ class AlphaVantageSource(Source):
             data = response.json()
 
             if 'Error Message' in data:
-                self.log.error(f"API Error for {symbol}: {data['Error Message']}")
+                self.logger.error(f"API Error for {symbol}: {data['Error Message']}")
                 return None
 
             if 'Note' in data:
-                self.log.warning(f"API rate limit reached: {data['Note']}")
+                self.logger.warning(f"API rate limit reached: {data['Note']}")
                 time.sleep(self.rate_limit_delay * 2)
                 return None
 
             series_key = f"Time Series ({self.interval})"
             if series_key not in data:
-                self.log.warning(f"No time series data for {symbol} (interval={self.interval})")
+                self.logger.warning(f"No time series data for {symbol} (interval={self.interval})")
                 return None
 
             time_series = data[series_key]
@@ -110,18 +110,18 @@ class AlphaVantageSource(Source):
             }
 
         except requests.exceptions.RequestException as e:
-            self.log.error(f"Request error for {symbol}: {str(e)}")
+            self.logger.error(f"Request error for {symbol}: {str(e)}")
             return None
         except json.JSONDecodeError as e:
-            self.log.error(f"JSON decode error for {symbol}: {str(e)}")
+            self.logger.error(f"JSON decode error for {symbol}: {str(e)}")
             return None
         except Exception as e:
-            self.log.error(f"Unexpected error for {symbol}: {str(e)}")
+            self.logger.error(f"Unexpected error for {symbol}: {str(e)}")
             return None
 
     def run(self):
         """Main run loop for the source"""
-        self.log.info(f"Starting Alpha Vantage source with symbols: {self.symbols}")
+        self.logger.info(f"Starting Alpha Vantage source with symbols: {self.symbols}")
 
         symbol_index = 0
 
@@ -143,10 +143,10 @@ class AlphaVantageSource(Source):
                     )
 
                     self.messages_produced += 1
-                    self.log.info(f"Produced message {self.messages_produced}/{self.max_messages} for {symbol}")
+                    self.logger.info(f"Produced message {self.messages_produced}/{self.max_messages} for {symbol}")
 
                     if self.messages_produced >= self.max_messages:
-                        self.log.info(f"Reached maximum message limit of {self.max_messages}")
+                        self.logger.info(f"Reached maximum message limit of {self.max_messages}")
                         break
 
                 symbol_index += 1
@@ -155,11 +155,11 @@ class AlphaVantageSource(Source):
                     time.sleep(self.rate_limit_delay)
 
             except Exception as e:
-                self.log.error(f"Error in run loop: {str(e)}")
+                self.logger.error(f"Error in run loop: {str(e)}")
                 time.sleep(self.rate_limit_delay)
                 continue
 
-        self.log.info("Alpha Vantage source stopped")
+        self.logger.info("Alpha Vantage source stopped")
 
 
 def main():
