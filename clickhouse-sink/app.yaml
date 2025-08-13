@@ -26,6 +26,12 @@ variables:
     inputType: FreeText
     defaultValue: default
     required: true
+  - name: CLICKHOUSE_INTERFACE
+    inputType: FreeText
+  - name: CLICKHOUSE_SECURE
+    inputType: FreeText
+  - name: CLICKHOUSE_VERIFY_TLS
+    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
