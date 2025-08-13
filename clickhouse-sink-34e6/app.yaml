@@ -26,6 +26,8 @@ variables:
     inputType: FreeText
     defaultValue: clickhouse-test
     required: true
+  - name: CLICKHOUSE_INTERFACE
+    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
