@@ -164,49 +164,6 @@ deployments:
           targetPort: 9000
         - port: 8123
           targetPort: 8123
-  - name: clickhouse-deployment-ssb4
-    application: clickhouse-sink
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
-    variables:
-      - name: input
-        inputType: InputTopic
-        required: true
-        value: solar-data
-      - name: CONSUMER_GROUP_NAME
-        inputType: FreeText
-        required: true
-        value: influxdb-sink
-      - name: BUFFER_SIZE
-        inputType: FreeText
-        value: 1000
-      - name: CLICKHOUSE_PASSWORD
-        inputType: Secret
-        required: true
-        secretKey: CLICKHOUSE_SECRET_KEY
-      - name: CLICKHOUSE_PORT
-        inputType: FreeText
-        required: true
-        value: 9000
-      - name: CLICKHOUSE_USER
-        inputType: FreeText
-        required: true
-        value: clickadmin
-      - name: CLICKHOUSE_DATABASE
-        inputType: FreeText
-        required: true
-        value: default
-      - name: CLICKHOUSE_HOST
-        inputType: FreeText
-        required: true
-        value: clickhouse-test
-      - name: BUFFER_DELAY
-        inputType: FreeText
-        value: 1
 
 # This section describes the Topics of the data pipeline
 topics:
