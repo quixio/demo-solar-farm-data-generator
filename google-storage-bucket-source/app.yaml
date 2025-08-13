@@ -4,37 +4,23 @@ variables:
   - name: output
     inputType: OutputTopic
     description: Name of the output topic to write into
-    defaultValue: s3-data
+    defaultValue: badboy
     required: true
-  - name: S3_BUCKET
+  - name: GOOGLE_FOLDER_PATH
     inputType: FreeText
-    description: The URI or URL to your S3 bucket
+    defaultValue: /
     required: true
-  - name: S3_REGION
+  - name: GOOGLE_BUCKET_URI
     inputType: FreeText
-    description: The region of your S3 bucket
+    defaultValue: gs://quix-workflow
     required: true
-  - name: S3_SECRET
+  - name: GOOGLE_SERVICE_ACCOUNT_KEY_KEY
     inputType: Secret
-    description: Your AWS secret
+    defaultValue: GCLOUD_PK_JSON
     required: true
-  - name: S3_ACCESS_KEY_ID
-    inputType: Secret
-    description: Your AWS Access Key
-    required: true
-  - name: S3_FOLDER_PATH
+  - name: GOOGLE_FILE_FORMAT
     inputType: FreeText
-    description: The path to the S3 folder to consume
-    required: true
-  - name: S3_FILE_FORMAT
-    inputType: FreeText
-    description: The file format of the files
-    defaultValue: json
-    required: true
-  - name: S3_FILE_COMPRESSION
-    inputType: FreeText
-    description: The type of file compression used for the files
-    defaultValue: gzip
+    defaultValue: csv
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
