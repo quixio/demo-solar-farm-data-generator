@@ -1,3 +1,4 @@
 quixstreams[s3]==3.22.0
 python-dotenv
 google-cloud-storage
+quixstreams
