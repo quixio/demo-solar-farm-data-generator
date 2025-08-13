@@ -22,6 +22,10 @@ variables:
     inputType: Secret
     defaultValue: GCLOUD_PK_JSON
     required: true
+  - name: GOOGLE_FILE_COMPRESSION
+    inputType: FreeText
+    defaultValue: none
+    required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
