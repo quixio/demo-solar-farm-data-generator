@@ -11,6 +11,7 @@ import time
 import json
 from datetime import datetime
 
+
 class ClickHouseSink(BatchingSink):
     def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
         super().__init__(
@@ -21,21 +22,56 @@ class ClickHouseSink(BatchingSink):
         self._table_created = False
 
     def setup(self):
+        # Resolve connection parameters with sensible defaults
+        host = os.environ.get('CLICKHOUSE_HOST', 'localhost')
+        database = os.environ.get('CLICKHOUSE_DATABASE', 'default')
+        username = os.environ.get('CLICKHOUSE_USER', 'default')
+        password = os.environ.get('CLICKHOUSE_PASSWORD', '')
+
+        # Detect and normalize port
+        port_env = os.environ.get('CLICKHOUSE_PORT', '')
         try:
-            port = int(os.environ.get('CLICKHOUSE_PORT', '8123'))
+            port = int(port_env) if port_env else None
         except ValueError:
-            port = 8123
+            port = None
 
-        self._client = clickhouse_connect.get_client(
-            host=os.environ.get('CLICKHOUSE_HOST'),
-            port=port,
-            database=os.environ.get('CLICKHOUSE_DATABASE'),
-            username=os.environ.get('CLICKHOUSE_USER'),
-            password=os.environ.get('CLICKHOUSE_PASSWORD')
-        )
+        # Determine interface: 'http' (default) or 'native'
+        # - Respect CLICKHOUSE_INTERFACE if provided
+        # - If port == 9000 and interface not set -> use native
+        # - Otherwise default to http
+        interface_env = os.environ.get('CLICKHOUSE_INTERFACE', '').strip().lower()
+        if interface_env in ('http', 'native'):
+            interface = interface_env
+        elif port == 9000:
+            interface = 'native'
+        else:
+            interface = 'http'
 
-        # Test connection
-        self._client.ping()
+        # Default ports if none provided
+        if port is None:
+            port = 9000 if interface == 'native' else 8123
+
+        try:
+            self._client = clickhouse_connect.get_client(
+                host=host,
+                port=port,
+                database=database,
+                username=username,
+                password=password,
+                interface=interface
+            )
+
+            # Test connection
+            self._client.ping()
+        except clickhouse_connect.driver.exceptions.DatabaseError as e:
+            # Provide a clearer hint for common misconfiguration
+            msg = str(e).lower()
+            if 'response code 400' in msg and interface == 'http' and port == 9000:
+                raise RuntimeError(
+                    'ClickHouse HTTP driver cannot connect to native port 9000. '
+                    'Either set CLICKHOUSE_PORT=8123 for HTTP or set CLICKHOUSE_INTERFACE=native to use port 9000.'
+                ) from e
+            raise
 
         # Create table if it doesn't exist
         self._create_table_if_not_exists()
@@ -81,7 +117,7 @@ class ClickHouseSink(BatchingSink):
         for item in batch:
             print(f'Raw message: {item}')
 
-            # Convert timestamp to datetime
+            # Convert timestamp (ms) to datetime for ClickHouse DateTime64(3)
             timestamp = datetime.fromtimestamp(item.timestamp / 1000.0)
 
             # Handle key - convert bytes to string if needed
@@ -93,22 +129,18 @@ class ClickHouseSink(BatchingSink):
             else:
                 key = str(key)
 
-            # Parse the value field which contains JSON string
+            # Parse the value field which contains JSON or dict
             try:
                 if isinstance(item.value, dict) and 'value' in item.value:
-                    # The actual solar data is in the 'value' field as a JSON string
                     solar_data = json.loads(item.value['value'])
                 elif isinstance(item.value, dict):
-                    # Direct dictionary access
                     solar_data = item.value
                 else:
-                    # Fallback - try to parse as JSON
                     solar_data = json.loads(str(item.value))
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 print(f"Error parsing solar data: {e}, raw value: {item.value}")
                 continue
 
-            # Extract solar panel data with safe access
             data.append([
                 timestamp,
                 solar_data.get('panel_id', ''),
@@ -135,7 +167,6 @@ class ClickHouseSink(BatchingSink):
                 key
             ])
 
-        # Optional: avoid inserting empty batches
         if not data:
             return
 
@@ -155,15 +186,15 @@ class ClickHouseSink(BatchingSink):
                 )
                 return
             except Exception as e:
-                # Treat timeouts or temporary network issues as backpressure
+                # Handle timeouts as backpressure
                 if 'timeout' in str(e).lower() or 'timed out' in str(e).lower():
-                    # Signal backpressure to Quix so it can pause/resume appropriately
                     raise SinkBackpressureError(retry_after=30.0)
                 attempts_remaining -= 1
                 if attempts_remaining:
                     time.sleep(3)
                 else:
                     raise Exception(f"Error while writing to ClickHouse: {e}") from e
+
 
 def main():
     app = Application(
@@ -179,7 +210,9 @@ def main():
     sdf = sdf.apply(lambda row: row).print(metadata=True)
     sdf.sink(clickhouse_sink)
 
+    # Demo run arguments; adjust/remove for production
     app.run(count=10, timeout=20)
+
 
 if __name__ == "__main__":
     main()
