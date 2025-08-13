@@ -1,5 +1,5 @@
 # DEPENDENCIES:
-# pip install clickhouse-connect
+# pip install clickhouse-connect>=0.7.0
 # END_DEPENDENCIES
 
 import os
@@ -9,6 +9,7 @@ from datetime import datetime
 from quixstreams import Application
 from quixstreams.sinks.base import BatchingSink, SinkBatch, SinkBackpressureError
 import clickhouse_connect
+from clickhouse_connect.driver.exceptions import ProgrammingError
 
 
 def strtobool(val: str) -> bool:
@@ -26,21 +27,20 @@ class ClickHouseSink(BatchingSink):
 
     def setup(self):
         host = os.environ.get("CLICKHOUSE_HOST", "localhost")
-        
-        env_interface = os.environ.get("CLICKHOUSE_INTERFACE", "").strip().lower()
-        env_port = os.environ.get("CLICKHOUSE_PORT")
 
-        port = 8123
+        # Only use 'native' if explicitly requested; default to HTTP for compatibility
+        env_interface = os.environ.get("CLICKHOUSE_INTERFACE", "").strip().lower()
+        interface = "native" if env_interface == "native" else "http"
+
+        # Ports default per interface unless explicitly set
+        env_port = os.environ.get("CLICKHOUSE_PORT")
         if env_port:
             try:
                 port = int(env_port)
             except ValueError:
-                port = 8123
-
-        if env_interface in ("http", "native"):
-            interface = env_interface
+                port = 9000 if interface == "native" else 8123
         else:
-            interface = "native" if port == 9000 else "http"
+            port = 9000 if interface == "native" else 8123
 
         secure = strtobool(os.environ.get("CLICKHOUSE_SECURE", "false"))
         verify = strtobool(os.environ.get("CLICKHOUSE_VERIFY_TLS", "true"))
@@ -62,7 +62,30 @@ class ClickHouseSink(BatchingSink):
             client_kwargs["secure"] = secure
             client_kwargs["verify"] = verify
 
-        self._client = clickhouse_connect.get_client(**client_kwargs)
+        # Try to create client; if native is not recognized, fall back to HTTP
+        try:
+            self._client = clickhouse_connect.get_client(**client_kwargs)
+        except ProgrammingError as e:
+            msg = str(e).lower()
+            if interface == "native" and "unrecognized client type native" in msg:
+                # Fallback to HTTP
+                fallback_port_env = os.environ.get("CLICKHOUSE_HTTP_PORT")
+                try:
+                    fallback_port = int(fallback_port_env) if fallback_port_env else 8123
+                except ValueError:
+                    fallback_port = 8123
+
+                client_kwargs.update({
+                    "interface": "http",
+                    "port": fallback_port,
+                    "secure": secure,
+                    "verify": verify
+                })
+                self._client = clickhouse_connect.get_client(**client_kwargs)
+            else:
+                # A different ProgrammingError – re-raise
+                raise
+
         self._client.ping()
         self._create_table_if_not_exists()
 
@@ -111,11 +134,20 @@ class ClickHouseSink(BatchingSink):
 
                 for item in batch:
                     print(f'Raw message: {item}')
-                    
-                    if isinstance(item.value, str):
+
+                    # Parse the nested value field from the message structure
+                    if hasattr(item, 'value') and isinstance(item.value, str):
+                        # The value field contains a JSON string that needs to be parsed
                         value_data = json.loads(item.value)
+                    elif hasattr(item, 'value') and isinstance(item.value, dict):
+                        # Check if this is the outer message structure with nested value
+                        if 'value' in item.value and isinstance(item.value['value'], str):
+                            value_data = json.loads(item.value['value'])
+                        else:
+                            value_data = item.value
                     else:
-                        value_data = item.value
+                        # Fallback - treat as direct data
+                        value_data = item.value if hasattr(item, 'value') else {}
 
                     panel_ts_ns = value_data.get("timestamp", 0)
                     panel_timestamp = datetime.fromtimestamp(panel_ts_ns / 1_000_000_000)
@@ -174,6 +206,7 @@ class ClickHouseSink(BatchingSink):
                 )
 
         raise Exception("Error while writing to ClickHouse")
+
 
 def main():
     app = Application(
