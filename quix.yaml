@@ -173,3 +173,6 @@ topics:
   - name: badboy
     configuration:
       partitions: 1
+  - name: stock-data
+    configuration:
+      partitions: 1
