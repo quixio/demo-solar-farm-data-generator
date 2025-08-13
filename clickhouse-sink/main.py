@@ -1,89 +1,142 @@
-# import the Quix Streams modules for interacting with Kafka.
-# For general info, see https://quix.io/docs/quix-streams/introduction.html
-# For sinks, see https://quix.io/docs/quix-streams/connectors/sinks/index.html
-from quixstreams import Application
-from quixstreams.sinks import BatchingSink, SinkBatch, SinkBackpressureError
+# DEPENDENCIES:
+# pip install clickhouse-connect
+# END_DEPENDENCIES
 
+from quixstreams import Application
+from quixstreams.sinks.base.sink import BatchingSink, SinkBatch, SinkBackpressureError
+import clickhouse_connect
 import os
 import time
+import json
+from datetime import datetime
 
-# for local dev, you can load env vars from a .env file
-# from dotenv import load_dotenv
-# load_dotenv()
+class ClickHouseSink(BatchingSink):
+    def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
+        super().__init__(
+            on_client_connect_success=on_client_connect_success,
+            on_client_connect_failure=on_client_connect_failure
+        )
+        self._client = None
+        self._table_created = False
 
+    def setup(self):
+        try:
+            port = int(os.environ.get('CLICKHOUSE_PORT', '8123'))
+        except ValueError:
+            port = 8123
+            
+        self._client = clickhouse_connect.get_client(
+            host=os.environ.get('CLICKHOUSE_HOST'),
+            port=port,
+            database=os.environ.get('CLICKHOUSE_DATABASE'),
+            username=os.environ.get('CLICKHOUSE_USER'),
+            password=os.environ.get('CLICKHOUSE_PASSWORD')
+        )
+        
+        # Test connection
+        self._client.ping()
+        
+        # Create table if it doesn't exist
+        self._create_table_if_not_exists()
 
-class MyDatabaseSink(BatchingSink):
-    """
-    Sinks are a way of writing data from a Kafka topic to a non-Kafka destination,
-    often some sort of database or file.
-
-    This is a custom placeholder Sink which showcases a simple pattern around
-    creating your own for a database.
-
-    There are numerous pre-built sinks available to use out of the box; see:
-    https://quix.io/docs/quix-streams/connectors/sinks/index.html
-    """
-    def _write_to_db(self, data):
-        """Placeholder for transformations and database write operation"""
-        ...
+    def _create_table_if_not_exists(self):
+        if not self._table_created:
+            create_table_sql = """
+            CREATE TABLE IF NOT EXISTS kafka_messages (
+                timestamp DateTime64(3),
+                topic String,
+                partition UInt32,
+                offset UInt64,
+                key String,
+                value String,
+                headers String
+            ) ENGINE = MergeTree()
+            ORDER BY (timestamp, topic, partition, offset)
+            """
+            self._client.command(create_table_sql)
+            self._table_created = True
 
     def write(self, batch: SinkBatch):
-        """
-        Every Sink requires a .write method.
-
-        Here is where we attempt to write batches of data (multiple consumed messages,
-        for the sake of efficiency/speed) to our database.
-
-        Sinks have sanctioned patterns around retrying and handling connections.
-
-        See https://quix.io/docs/quix-streams/connectors/sinks/custom-sinks.html for
-        more details.
-        """
         attempts_remaining = 3
-        data = [item.value for item in batch]
+        
+        # Prepare data for insertion
+        data = []
+        for item in batch:
+            print(f'Raw message: {item}')
+            
+            # Convert timestamp to datetime
+            timestamp = datetime.fromtimestamp(item.timestamp / 1000.0)
+            
+            # Handle key - convert bytes to string if needed
+            key = item.key
+            if isinstance(key, bytes):
+                key = key.decode('utf-8', errors='ignore')
+            elif key is None:
+                key = ''
+            else:
+                key = str(key)
+            
+            # Handle value - convert to JSON string if it's a dict
+            value = item.value
+            if isinstance(value, dict):
+                value = json.dumps(value)
+            elif isinstance(value, bytes):
+                value = value.decode('utf-8', errors='ignore')
+            elif value is None:
+                value = ''
+            else:
+                value = str(value)
+            
+            # Handle headers
+            headers = item.headers if item.headers else []
+            headers_str = json.dumps(dict(headers)) if headers else '{}'
+            
+            data.append([
+                timestamp,
+                item.topic,
+                item.partition,
+                item.offset,
+                key,
+                value,
+                headers_str
+            ])
+        
         while attempts_remaining:
             try:
-                return self._write_to_db(data)
-            except ConnectionError:
-                # Maybe we just failed to connect, do a short wait and try again
-                # We can't repeat forever; the consumer will eventually time out
+                self._client.insert(
+                    'kafka_messages',
+                    data,
+                    column_names=['timestamp', 'topic', 'partition', 'offset', 'key', 'value', 'headers']
+                )
+                return
+            except Exception as e:
+                if 'timeout' in str(e).lower():
+                    raise SinkBackpressureError(
+                        retry_after=30.0,
+                        topic=batch.topic,
+                        partition=batch.partition,
+                    )
                 attempts_remaining -= 1
                 if attempts_remaining:
                     time.sleep(3)
-            except TimeoutError:
-                # Maybe the server is busy, do a sanctioned extended pause
-                # Always safe to do, but will require re-consuming the data.
-                raise SinkBackpressureError(
-                    retry_after=30.0,
-                    topic=batch.topic,
-                    partition=batch.partition,
-                )
-        raise Exception("Error while writing to database")
-
+                else:
+                    raise Exception(f"Error while writing to ClickHouse: {e}")
 
 def main():
-    """ Here we will set up our Application. """
-
-    # Setup necessary objects
     app = Application(
-        consumer_group="my_db_destination",
+        consumer_group="clickhouse_sink_destination",
         auto_create_topics=True,
         auto_offset_reset="earliest"
     )
-    my_db_sink = MyDatabaseSink()
+    
+    clickhouse_sink = ClickHouseSink()
     input_topic = app.topic(name=os.environ["input"])
     sdf = app.dataframe(topic=input_topic)
-
-    # Do SDF operations/transformations
+    
     sdf = sdf.apply(lambda row: row).print(metadata=True)
+    sdf.sink(clickhouse_sink)
+    
+    app.run(count=10, timeout=20)
 
-    # Finish by calling StreamingDataFrame.sink()
-    sdf.sink(my_db_sink)
-
-    # With our pipeline defined, now run the Application
-    app.run()
-
-
-# It is recommended to execute Applications under a conditional main
 if __name__ == "__main__":
     main()
