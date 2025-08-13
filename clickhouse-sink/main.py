@@ -1,3 +1,8 @@
+# Cached sandbox code for clickhouse
+# Generated on 2025-08-13 18:39:47
+# Template: Unknown
+# This is cached code - delete this file to force regeneration
+
 # DEPENDENCIES:
 # pip install clickhouse-driver
 # END_DEPENDENCIES
