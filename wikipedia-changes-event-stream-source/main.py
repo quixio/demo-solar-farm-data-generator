@@ -1,130 +1,175 @@
-# Cached connection test code for wikipedia changes event stream
-# Generated on 2025-08-13 23:01:02
-# Template: Unknown
-# This is cached code - delete this file to force regeneration
-
-# DEPENDENCIES:
-# pip install requests-sse
-# pip install python-dotenv
-# END_DEPENDENCIES
-
 import os
 import json
+import logging
+import signal
 import sys
 from datetime import datetime
+from typing import Optional
 from dotenv import load_dotenv
-from requests_sse import EventSource
+from quixstreams import Application
+from quixstreams.sources.base import Source
 
-# Load environment variables
 load_dotenv()
 
-def connect_and_read_wikipedia_changes():
-    """
-    Connect to Wikipedia changes event stream and read 10 sample page edit events.
-    """
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+class WikipediaChangesSource(Source):
+    def __init__(self, name: str = "wikipedia-changes-source", shutdown_event: Optional[object] = None):
+        super().__init__(name=name)
+        self.url = 'https://stream.wikimedia.org/v2/stream/recentchange'
+        self.shutdown_event = shutdown_event
+        self.messages_processed = 0
+        self.max_messages = 100
+        
+    def setup(self):
+        try:
+            import requests
+            response = requests.get(self.url, stream=True, timeout=5)
+            if response.status_code == 200:
+                logger.info(f"Successfully connected to Wikipedia changes stream at {self.url}")
+                if hasattr(self, 'on_client_connect_success'):
+                    self.on_client_connect_success()
+            else:
+                logger.error(f"Failed to connect to Wikipedia changes stream. Status code: {response.status_code}")
+                if hasattr(self, 'on_client_connect_failure'):
+                    self.on_client_connect_failure()
+        except Exception as e:
+            logger.error(f"Connection test failed: {str(e)}")
+            if hasattr(self, 'on_client_connect_failure'):
+                self.on_client_connect_failure()
     
-    # Wikipedia EventStreams URL for recent changes
-    url = 'https://stream.wikimedia.org/v2/stream/recentchange'
-    
-    print("=" * 80)
-    print("Connecting to Wikipedia Changes Event Stream")
-    print(f"URL: {url}")
-    print("=" * 80)
-    
-    events_read = 0
-    max_events = 10
-    
-    try:
-        with EventSource(url, timeout=30) as stream:
-            print("\n✓ Successfully connected to stream\n")
-            print("Reading 10 sample page edit events...\n")
+    def run(self):
+        try:
+            from requests_sse import EventSource
+        except ImportError:
+            logger.error("requests-sse library is required. Install it with: pip install requests-sse")
+            return
             
-            for event in stream:
-                if event.type == 'message':
-                    try:
-                        # Parse the JSON data
-                        change = json.loads(event.data)
-                        
-                        # Skip canary events (test events)
-                        if change.get('meta', {}).get('domain') == 'canary':
-                            continue
-                        
-                        # Filter for edit events only (as requested for page edits)
-                        if change.get('type') != 'edit':
-                            continue
-                        
-                        events_read += 1
-                        
-                        # Extract basic metadata about the page edit
-                        print(f"--- Event {events_read}/{max_events} ---")
-                        print(f"Timestamp: {change.get('meta', {}).get('dt', 'N/A')}")
-                        print(f"Wiki: {change.get('wiki', 'N/A')}")
-                        print(f"Page Title: {change.get('title', 'N/A')}")
-                        print(f"User: {change.get('user', 'N/A')}")
-                        print(f"Edit Type: {change.get('type', 'N/A')}")
-                        print(f"Namespace: {change.get('namespace', 'N/A')}")
-                        print(f"Comment: {change.get('comment', 'N/A')[:100]}...")  # Truncate long comments
-                        print(f"Old Revision ID: {change.get('revision', {}).get('old', 'N/A')}")
-                        print(f"New Revision ID: {change.get('revision', {}).get('new', 'N/A')}")
-                        print(f"Bot Edit: {change.get('bot', False)}")
-                        print(f"Minor Edit: {change.get('minor', False)}")
-                        print(f"Page ID: {change.get('id', 'N/A')}")
-                        print(f"Server Name: {change.get('server_name', 'N/A')}")
-                        
-                        # Optional: Print raw JSON for debugging (commented out by default)
-                        # print(f"\nRaw JSON:")
-                        # print(json.dumps(change, indent=2)[:500] + "...")
-                        
-                        print()
-                        
-                        if events_read >= max_events:
-                            print("=" * 80)
-                            print(f"✓ Successfully read {max_events} page edit events")
-                            print("=" * 80)
+        logger.info(f"Starting Wikipedia changes source from {self.url}")
+        
+        while self.running and self.messages_processed < self.max_messages:
+            try:
+                with EventSource(self.url, timeout=30) as stream:
+                    logger.info("Connected to Wikipedia EventStream")
+                    
+                    for event in stream:
+                        if not self.running or self.messages_processed >= self.max_messages:
                             break
                             
-                    except json.JSONDecodeError as e:
-                        print(f"Warning: Failed to parse JSON: {e}")
-                        continue
-                    except KeyError as e:
-                        print(f"Warning: Missing expected field: {e}")
-                        continue
-                        
-    except ConnectionError as e:
-        print(f"\n✗ Connection Error: Failed to connect to Wikipedia stream")
-        print(f"  Details: {str(e)[:200]}")
-        sys.exit(1)
-    except TimeoutError as e:
-        print(f"\n✗ Timeout Error: Connection timed out")
-        print(f"  Details: {str(e)[:200]}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\n✗ Unexpected Error: {type(e).__name__}")
-        print(f"  Details: {str(e)[:200]}")
-        sys.exit(1)
-    finally:
-        print("\nConnection test completed.")
+                        if event.type == 'message':
+                            try:
+                                change = json.loads(event.data)
+                                
+                                if change.get('meta', {}).get('domain') == 'canary':
+                                    continue
+                                
+                                if change.get('type') != 'edit':
+                                    continue
+                                
+                                kafka_message = {
+                                    'timestamp': change.get('meta', {}).get('dt', ''),
+                                    'wiki': change.get('wiki', ''),
+                                    'pageTitle': change.get('title', ''),
+                                    'user': change.get('user', ''),
+                                    'editType': change.get('type', ''),
+                                    'namespace': change.get('namespace', 0),
+                                    'comment': change.get('comment', ''),
+                                    'oldRevisionId': change.get('revision', {}).get('old', 0),
+                                    'newRevisionId': change.get('revision', {}).get('new', 0),
+                                    'botEdit': change.get('bot', False),
+                                    'minorEdit': change.get('minor', False),
+                                    'pageId': change.get('id', 0),
+                                    'serverName': change.get('server_name', '')
+                                }
+                                
+                                key = f"{change.get('wiki', 'unknown')}_{change.get('id', 0)}"
+                                
+                                msg = self.serialize(
+                                    key=key,
+                                    value=kafka_message
+                                )
+                                
+                                self.produce(
+                                    key=msg.key,
+                                    value=msg.value
+                                )
+                                
+                                self.messages_processed += 1
+                                
+                                if self.messages_processed % 10 == 0:
+                                    logger.info(f"Processed {self.messages_processed} Wikipedia edit events")
+                                
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Failed to parse JSON: {e}")
+                                continue
+                            except Exception as e:
+                                logger.error(f"Error processing event: {e}")
+                                continue
+                                
+            except ConnectionError as e:
+                logger.error(f"Connection error: {e}")
+                if self.running and self.messages_processed < self.max_messages:
+                    logger.info("Attempting to reconnect in 5 seconds...")
+                    import time
+                    time.sleep(5)
+                    continue
+            except Exception as e:
+                logger.error(f"Unexpected error in source: {e}")
+                if self.running and self.messages_processed < self.max_messages:
+                    logger.info("Attempting to restart in 5 seconds...")
+                    import time
+                    time.sleep(5)
+                    continue
+                    
+        logger.info(f"Wikipedia changes source stopped. Total messages processed: {self.messages_processed}")
+        if self.shutdown_event:
+            self.shutdown_event.set()
+
+
+def signal_handler(sig, frame):
+    logger.info("Received shutdown signal, stopping application...")
+    sys.exit(0)
+
 
 def main():
-    """
-    Main function to run the Wikipedia changes stream connection test.
-    """
-    print("\n" + "=" * 80)
-    print(" WIKIPEDIA CHANGES EVENT STREAM CONNECTION TEST")
-    print("=" * 80)
-    print("\nThis script will connect to the Wikipedia changes event stream")
-    print("and read 10 sample page edit events with their metadata.\n")
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    app = Application(
+        consumer_group="wikipedia-changes-consumer",
+        auto_offset_reset="latest"
+    )
+    
+    output_topic_name = os.environ.get("output", "wikipedia-data")
+    topic = app.topic(output_topic_name)
+    
+    source = WikipediaChangesSource(
+        name="wikipedia-changes-source"
+    )
+    
+    sdf = app.dataframe(topic=topic, source=source)
+    
+    sdf.print(metadata=True)
+    
+    logger.info(f"Starting Wikipedia changes source application")
+    logger.info(f"Output topic: {output_topic_name}")
+    logger.info(f"Processing up to 100 messages for testing")
     
     try:
-        connect_and_read_wikipedia_changes()
-        print("\n✓ Connection test successful!")
-        
+        app.run()
     except KeyboardInterrupt:
-        print("\n\n⚠ Connection test interrupted by user")
-        sys.exit(0)
+        logger.info("Application interrupted by user")
     except Exception as e:
-        print(f"\n✗ Connection test failed: {str(e)[:200]}")
-        sys.exit(1)
+        logger.error(f"Application error: {e}")
+        raise
+    finally:
+        logger.info("Application shutdown complete")
+
 
 if __name__ == "__main__":
     main()
