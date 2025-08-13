@@ -12,6 +12,14 @@ import json
 from datetime import datetime
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    val = val.strip().lower()
+    return val in ("1", "true", "yes", "y", "on")
+
+
 class ClickHouseSink(BatchingSink):
     def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
         super().__init__(
@@ -35,41 +43,59 @@ class ClickHouseSink(BatchingSink):
         except ValueError:
             port = None
 
-        # Determine interface: 'http' (default) or 'native'
-        # - Respect CLICKHOUSE_INTERFACE if provided
-        # - If port == 9000 and interface not set -> use native
-        # - Otherwise default to http
-        interface_env = os.environ.get('CLICKHOUSE_INTERFACE', '').strip().lower()
-        if interface_env in ('http', 'native'):
-            interface = interface_env
-        elif port == 9000:
-            interface = 'native'
+        # Determine secure (HTTPS) vs HTTP
+        # Priority:
+        # 1) CLICKHOUSE_PROTOCOL=https -> secure True
+        # 2) CLICKHOUSE_SECURE / CLICKHOUSE_SSL boolean flags
+        # Defaults to False (HTTP)
+        protocol_env = os.environ.get('CLICKHOUSE_PROTOCOL', '').strip().lower()
+        if protocol_env in ('https', 'http'):
+            secure = protocol_env == 'https'
         else:
-            interface = 'http'
+            secure = _env_bool('CLICKHOUSE_SECURE', _env_bool('CLICKHOUSE_SSL', False))
 
         # Default ports if none provided
         if port is None:
-            port = 9000 if interface == 'native' else 8123
+            port = 8443 if secure else 8123
+
+        # Guard against native protocol port with clickhouse-connect
+        if port == 9000:
+            raise RuntimeError(
+                "CLICKHOUSE_PORT is set to 9000 (native protocol), but the clickhouse-connect driver "
+                "only supports HTTP/HTTPS. Use an HTTP(S) port (8123 or 8443), or switch to the "
+                "'clickhouse-driver' library if you must use the native protocol."
+            )
 
         try:
+            # Note: Do NOT pass interface='native' to clickhouse-connect. It supports HTTP/HTTPS only.
             self._client = clickhouse_connect.get_client(
                 host=host,
                 port=port,
                 database=database,
                 username=username,
                 password=password,
-                interface=interface
+                secure=secure
+                # If you have a custom CA, you can also pass: verify=True, ca_cert='/path/to/ca.pem'
             )
 
             # Test connection
             self._client.ping()
-        except clickhouse_connect.driver.exceptions.DatabaseError as e:
+        except clickhouse_connect.driver.exceptions.ProgrammingError as e:
             # Provide a clearer hint for common misconfiguration
             msg = str(e).lower()
-            if 'response code 400' in msg and interface == 'http' and port == 9000:
+            if 'unrecognized client type' in msg:
                 raise RuntimeError(
-                    'ClickHouse HTTP driver cannot connect to native port 9000. '
-                    'Either set CLICKHOUSE_PORT=8123 for HTTP or set CLICKHOUSE_INTERFACE=native to use port 9000.'
+                    "clickhouse-connect only supports HTTP/HTTPS. "
+                    "Remove native protocol settings and ensure you are using ports 8123/8443."
+                ) from e
+            raise
+        except clickhouse_connect.driver.exceptions.DatabaseError as e:
+            # Catch common HTTP vs port mismatch case and guide the user
+            msg = str(e).lower()
+            if 'response code 400' in msg and not secure and port in (9000, 8443):
+                raise RuntimeError(
+                    'ClickHouse HTTP driver cannot connect to the native port (9000) or HTTPS port without TLS. '
+                    'Set CLICKHOUSE_PORT=8123 for HTTP, or set CLICKHOUSE_PROTOCOL=https (and typically port 8443) for HTTPS.'
                 ) from e
             raise
 
