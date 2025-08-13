@@ -164,27 +164,6 @@ deployments:
           targetPort: 9000
         - port: 8123
           targetPort: 8123
-  - name: alphavantage realtime api-deployment-b533
-    application: alphavantage-realtime-api-source
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
-    variables:
-      - name: output
-        inputType: OutputTopic
-        required: true
-        value: stock-data
-      - name: ALPHAVANTAGE_API_URL
-        inputType: FreeText
-        required: true
-        value: https://www.alphavantage.co
-      - name: ALPHAVANTAGE_API_KEY
-        inputType: Secret
-        required: true
-        secretKey: AV_API_KEY
 
 # This section describes the Topics of the data pipeline
 topics:
