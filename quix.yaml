@@ -164,6 +164,39 @@ deployments:
           targetPort: 9000
         - port: 8123
           targetPort: 8123
+  - name: google storage bucket-deployment-ok0z
+    application: google-storage-bucket-source
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 200
+      memory: 500
+      replicas: 1
+    variables:
+      - name: output
+        inputType: OutputTopic
+        required: true
+        value: badboy
+      - name: GOOGLE_FILE_FORMAT
+        inputType: FreeText
+        required: true
+        value: csv
+      - name: GOOGLE_BUCKET_URI
+        inputType: FreeText
+        required: true
+        value: gs://quix-workflow
+      - name: GOOGLE_FOLDER_PATH
+        inputType: FreeText
+        required: true
+        value: /
+      - name: GOOGLE_SERVICE_ACCOUNT_KEY_KEY
+        inputType: Secret
+        required: true
+        secretKey: GCLOUD_PK_JSON
+      - name: GOOGLE_FILE_COMPRESSION
+        inputType: FreeText
+        required: true
+        value: none
 
 # This section describes the Topics of the data pipeline
 topics:
