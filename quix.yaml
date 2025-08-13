@@ -197,3 +197,6 @@ topics:
   - name: stock-data
     configuration:
       partitions: 1
+  - name: wikipedia-data
+    configuration:
+      partitions: 1
