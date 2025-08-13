@@ -4,7 +4,7 @@
 
 from quixstreams import Application
 from quixstreams.sinks.base.sink import BatchingSink, SinkBatch
-from quixstreams.sinks.exceptions import BackpressureError
+from quixstreams.sinks.base.exceptions import SinkBackpressureError
 import clickhouse_connect
 import os
 import time
@@ -135,6 +135,10 @@ class ClickHouseSink(BatchingSink):
                 key
             ])
 
+        # Optional: avoid inserting empty batches
+        if not data:
+            return
+
         while attempts_remaining:
             try:
                 self._client.insert(
@@ -154,7 +158,7 @@ class ClickHouseSink(BatchingSink):
                 # Treat timeouts or temporary network issues as backpressure
                 if 'timeout' in str(e).lower() or 'timed out' in str(e).lower():
                     # Signal backpressure to Quix so it can pause/resume appropriately
-                    raise BackpressureError(retry_after=30.0)
+                    raise SinkBackpressureError(retry_after=30.0)
                 attempts_remaining -= 1
                 if attempts_remaining:
                     time.sleep(3)
