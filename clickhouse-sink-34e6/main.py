@@ -1,14 +1,10 @@
-# Cached sandbox code for clickhouse
-# Generated on 2025-08-13 14:52:31
-# Template: Unknown
-# This is cached code - delete this file to force regeneration
-
 # DEPENDENCIES:
 # pip install clickhouse-connect
 # END_DEPENDENCIES
 
 from quixstreams import Application
-from quixstreams.sinks.base.sink import BatchingSink, SinkBatch, SinkBackpressureError
+from quixstreams.sinks.base.sink import BatchingSink, SinkBatch
+from quixstreams.sinks.exceptions import BackpressureError
 import clickhouse_connect
 import os
 import time
@@ -29,7 +25,7 @@ class ClickHouseSink(BatchingSink):
             port = int(os.environ.get('CLICKHOUSE_PORT', '8123'))
         except ValueError:
             port = 8123
-            
+
         self._client = clickhouse_connect.get_client(
             host=os.environ.get('CLICKHOUSE_HOST'),
             port=port,
@@ -37,41 +33,57 @@ class ClickHouseSink(BatchingSink):
             username=os.environ.get('CLICKHOUSE_USER'),
             password=os.environ.get('CLICKHOUSE_PASSWORD')
         )
-        
+
         # Test connection
         self._client.ping()
-        
+
         # Create table if it doesn't exist
         self._create_table_if_not_exists()
 
     def _create_table_if_not_exists(self):
         if not self._table_created:
             create_table_sql = """
-            CREATE TABLE IF NOT EXISTS kafka_messages (
+            CREATE TABLE IF NOT EXISTS solar_panel_data (
                 timestamp DateTime64(3),
-                topic String,
-                partition UInt32,
-                offset UInt64,
-                key String,
-                value String,
-                headers String
+                panel_id String,
+                location_id String,
+                location_name String,
+                latitude Float64,
+                longitude Float64,
+                timezone Int32,
+                power_output Float64,
+                unit_power String,
+                temperature Float64,
+                unit_temp String,
+                irradiance Float64,
+                unit_irradiance String,
+                voltage Float64,
+                unit_voltage String,
+                current Float64,
+                unit_current String,
+                inverter_status String,
+                original_timestamp UInt64,
+                kafka_topic String,
+                kafka_partition UInt32,
+                kafka_offset UInt64,
+                kafka_key String
             ) ENGINE = MergeTree()
-            ORDER BY (timestamp, topic, partition, offset)
+            ORDER BY (timestamp, panel_id, location_id)
             """
             self._client.command(create_table_sql)
             self._table_created = True
 
     def write(self, batch: SinkBatch):
         attempts_remaining = 3
-        
+
         # Prepare data for insertion
         data = []
         for item in batch:
             print(f'Raw message: {item}')
-            
+
             # Convert timestamp to datetime
             timestamp = datetime.fromtimestamp(item.timestamp / 1000.0)
-            
+
             # Handle key - convert bytes to string if needed
             key = item.key
             if isinstance(key, bytes):
@@ -80,52 +92,74 @@ class ClickHouseSink(BatchingSink):
                 key = ''
             else:
                 key = str(key)
-            
-            # Handle value - convert to JSON string if it's a dict
-            value = item.value
-            if isinstance(value, dict):
-                value = json.dumps(value)
-            elif isinstance(value, bytes):
-                value = value.decode('utf-8', errors='ignore')
-            elif value is None:
-                value = ''
-            else:
-                value = str(value)
-            
-            # Handle headers
-            headers = item.headers if item.headers else []
-            headers_str = json.dumps(dict(headers)) if headers else '{}'
-            
+
+            # Parse the value field which contains JSON string
+            try:
+                if isinstance(item.value, dict) and 'value' in item.value:
+                    # The actual solar data is in the 'value' field as a JSON string
+                    solar_data = json.loads(item.value['value'])
+                elif isinstance(item.value, dict):
+                    # Direct dictionary access
+                    solar_data = item.value
+                else:
+                    # Fallback - try to parse as JSON
+                    solar_data = json.loads(str(item.value))
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                print(f"Error parsing solar data: {e}, raw value: {item.value}")
+                continue
+
+            # Extract solar panel data with safe access
             data.append([
                 timestamp,
+                solar_data.get('panel_id', ''),
+                solar_data.get('location_id', ''),
+                solar_data.get('location_name', ''),
+                float(solar_data.get('latitude', 0.0)),
+                float(solar_data.get('longitude', 0.0)),
+                int(solar_data.get('timezone', 0)),
+                float(solar_data.get('power_output', 0.0)),
+                solar_data.get('unit_power', ''),
+                float(solar_data.get('temperature', 0.0)),
+                solar_data.get('unit_temp', ''),
+                float(solar_data.get('irradiance', 0.0)),
+                solar_data.get('unit_irradiance', ''),
+                float(solar_data.get('voltage', 0.0)),
+                solar_data.get('unit_voltage', ''),
+                float(solar_data.get('current', 0.0)),
+                solar_data.get('unit_current', ''),
+                solar_data.get('inverter_status', ''),
+                int(solar_data.get('timestamp', 0)),
                 item.topic,
                 item.partition,
                 item.offset,
-                key,
-                value,
-                headers_str
+                key
             ])
-        
+
         while attempts_remaining:
             try:
                 self._client.insert(
-                    'kafka_messages',
+                    'solar_panel_data',
                     data,
-                    column_names=['timestamp', 'topic', 'partition', 'offset', 'key', 'value', 'headers']
+                    column_names=[
+                        'timestamp', 'panel_id', 'location_id', 'location_name',
+                        'latitude', 'longitude', 'timezone', 'power_output', 'unit_power',
+                        'temperature', 'unit_temp', 'irradiance', 'unit_irradiance',
+                        'voltage', 'unit_voltage', 'current', 'unit_current',
+                        'inverter_status', 'original_timestamp', 'kafka_topic',
+                        'kafka_partition', 'kafka_offset', 'kafka_key'
+                    ]
                 )
                 return
             except Exception as e:
-                if 'timeout' in str(e).lower():
-                    raise SinkBackpressureError(
-                        retry_after=30.0,
-                        topic=batch.topic,
-                        partition=batch.partition,
-                    )
+                # Treat timeouts or temporary network issues as backpressure
+                if 'timeout' in str(e).lower() or 'timed out' in str(e).lower():
+                    # Signal backpressure to Quix so it can pause/resume appropriately
+                    raise BackpressureError(retry_after=30.0)
                 attempts_remaining -= 1
                 if attempts_remaining:
                     time.sleep(3)
                 else:
-                    raise Exception(f"Error while writing to ClickHouse: {e}")
+                    raise Exception(f"Error while writing to ClickHouse: {e}") from e
 
 def main():
     app = Application(
@@ -133,14 +167,14 @@ def main():
         auto_create_topics=True,
         auto_offset_reset="earliest"
     )
-    
+
     clickhouse_sink = ClickHouseSink()
     input_topic = app.topic(name=os.environ["input"])
     sdf = app.dataframe(topic=input_topic)
-    
+
     sdf = sdf.apply(lambda row: row).print(metadata=True)
     sdf.sink(clickhouse_sink)
-    
+
     app.run(count=10, timeout=20)
 
 if __name__ == "__main__":
