@@ -10,20 +10,21 @@ from clickhouse_driver import Client
 from datetime import datetime
 
 class ClickHouseSink(BatchingSink):
-    def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
+    def __init__(self, on_client_connect_success=None, on_client_connect_failure=None, **kwargs):
         super().__init__(
             on_client_connect_success=on_client_connect_success,
-            on_client_connect_failure=on_client_connect_failure
+            on_client_connect_failure=on_client_connect_failure,
+            **kwargs
         )
         self._client = None
         self._table_created = False
 
     def setup(self):
         try:
-            port = int(os.environ.get('CLICKHOUSE_PORT', '8123'))
+            port = int(os.environ.get('CLICKHOUSE_PORT', '9000'))
         except ValueError:
-            port = 8123
-            
+            port = 9000
+
         self._client = Client(
             host=os.environ.get('CLICKHOUSE_HOST', 'localhost'),
             port=port,
@@ -31,17 +32,18 @@ class ClickHouseSink(BatchingSink):
             user=os.environ.get('CLICKHOUSE_USER', 'default'),
             password=os.environ.get('CLICKHOUSE_PASSWORD', '')
         )
-        
+
         # Test connection
         self._client.execute('SELECT 1')
-        
-        if self.on_client_connect_success:
-            self.on_client_connect_success()
+
+        # Call the correct success hook used by the base class
+        if callable(self._on_client_connect_success):
+            self._on_client_connect_success()
 
     def _create_table_if_not_exists(self):
         if self._table_created:
             return
-            
+
         create_table_sql = """
         CREATE TABLE IF NOT EXISTS solar_data (
             panel_id String,
@@ -70,63 +72,70 @@ class ClickHouseSink(BatchingSink):
         ) ENGINE = MergeTree()
         ORDER BY (location_id, panel_id, timestamp)
         """
-        
+
         self._client.execute(create_table_sql)
         self._table_created = True
 
     def write(self, batch: SinkBatch):
         if not self._table_created:
             self._create_table_if_not_exists()
-            
+
         rows = []
         for item in batch:
             print(f'Raw message: {item}')
-            
-            # Parse the JSON value string
+
+            # Parse the JSON value string from the nested structure
             try:
-                if isinstance(item.value, str):
+                # The message has a nested structure with 'value' field containing JSON string
+                if hasattr(item, 'value') and isinstance(item.value, str):
                     data = json.loads(item.value)
+                elif hasattr(item, 'value') and isinstance(item.value, dict):
+                    # Check if it's the nested structure from the schema
+                    if 'value' in item.value and isinstance(item.value['value'], str):
+                        data = json.loads(item.value['value'])
+                    else:
+                        data = item.value
                 else:
                     data = item.value
             except (json.JSONDecodeError, TypeError) as e:
                 print(f"Error parsing message value: {e}")
                 continue
-                
-            # Convert epoch timestamp to datetime
+
+            # Convert epoch timestamp (assumed nanoseconds) to datetime
             timestamp_ns = data.get('timestamp', 0)
-            timestamp_ms = timestamp_ns // 1_000_000  # Convert nanoseconds to milliseconds
+            timestamp_ms = timestamp_ns // 1_000_000  # ns -> ms
             timestamp_dt = datetime.fromtimestamp(timestamp_ms / 1000.0)
-            
-            # Convert Kafka timestamp to datetime
+
+            # Convert Kafka timestamp (ms) to datetime
             kafka_timestamp_dt = datetime.fromtimestamp(item.timestamp / 1000.0)
-            
+
             row = (
                 data.get('panel_id', ''),
                 data.get('location_id', ''),
                 data.get('location_name', ''),
-                data.get('latitude', 0.0),
-                data.get('longitude', 0.0),
-                data.get('timezone', 0),
-                data.get('power_output', 0.0),
+                float(data.get('latitude', 0.0) or 0.0),
+                float(data.get('longitude', 0.0) or 0.0),
+                int(data.get('timezone', 0) or 0),
+                float(data.get('power_output', 0.0) or 0.0),
                 data.get('unit_power', ''),
-                data.get('temperature', 0.0),
+                float(data.get('temperature', 0.0) or 0.0),
                 data.get('unit_temp', ''),
-                data.get('irradiance', 0.0),
+                float(data.get('irradiance', 0.0) or 0.0),
                 data.get('unit_irradiance', ''),
-                data.get('voltage', 0.0),
+                float(data.get('voltage', 0.0) or 0.0),
                 data.get('unit_voltage', ''),
-                data.get('current', 0.0),
+                float(data.get('current', 0.0) or 0.0),
                 data.get('unit_current', ''),
                 data.get('inverter_status', ''),
                 timestamp_dt,
-                str(item.key) if item.key else '',
+                str(item.key) if item.key is not None else '',
                 kafka_timestamp_dt,
                 item.topic,
                 item.partition,
                 item.offset
             )
             rows.append(row)
-        
+
         if rows:
             try:
                 insert_sql = """
@@ -152,14 +161,14 @@ def main():
         auto_create_topics=True,
         auto_offset_reset="earliest"
     )
-    
+
     clickhouse_sink = ClickHouseSink()
     input_topic = app.topic(name=os.environ["input"])
     sdf = app.dataframe(topic=input_topic)
-    
+
     sdf = sdf.apply(lambda row: row).print(metadata=True)
     sdf.sink(clickhouse_sink)
-    
+
     app.run(count=10, timeout=20)
 
 if __name__ == "__main__":
