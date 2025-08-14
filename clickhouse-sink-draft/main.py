@@ -1,43 +1,55 @@
-# import Utility modules
+# Cached sandbox code for unknown
+# Generated on 2025-08-14 16:17:31
+# Template: Unknown
+# This is cached code - delete this file to force regeneration
+
+# DEPENDENCIES:
+# pip install quixstreams
+# pip install clickhouse-driver
+# pip install python-dotenv
+# END_DEPENDENCIES
+
 import os
-
-# import vendor-specific modules
+import json
+import logging
+from datetime import datetime
 from quixstreams import Application
-from quixstreams.sinks.core.influxdb3 import InfluxDB3Sink
-
-# for local dev, load env vars from a .env file
+from clickhouse_driver import Client
 from dotenv import load_dotenv
+
 load_dotenv()
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-tag_keys = keys.split(",") if (keys := os.environ.get("INFLUXDB_TAG_KEYS")) else []
-field_keys = keys.split(",") if (keys := os.environ.get("INFLUXDB_FIELD_KEYS")) else []
-measurement_name = os.environ.get("INFLUXDB_MEASUREMENT_NAME", "measurement1")
-time_setter = col if (col := os.environ.get("TIMESTAMP_COLUMN")) else None
+# ClickHouse connection parameters
+try:
+    port = int(os.environ.get('CLICKHOUSE_PORT', '9000'))
+except ValueError:
+    port = 9000
 
-influxdb_v3_sink = InfluxDB3Sink(
-    token=os.environ["INFLUXDB_TOKEN"],
-    host=os.environ["INFLUXDB_HOST"],
-    organization_id=os.environ["INFLUXDB_ORG"],
-    tags_keys=tag_keys,
-    fields_keys=field_keys,
-    time_setter=time_setter,
-    database=os.environ["INFLUXDB_DATABASE"],
-    measurement=measurement_name,
+clickhouse_client = Client(
+    host=os.environ.get('CLICKHOUSE_HOST', 'localhost'),
+    port=port,
+    user=os.environ.get('CLICKHOUSE_USER', 'default'),
+    password=os.environ.get('CLICKHOUSE_PASSWORD', ''),
+    database=os.environ.get('CLICKHOUSE_DATABASE', 'default')
 )
 
 
 app = Application(
-    consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "influxdb-data-writer"),
+    consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "clickhouse-sink"),
     auto_offset_reset="earliest",
-    commit_every=int(os.environ.get("BUFFER_SIZE", "1000")),
-    commit_interval=float(os.environ.get("BUFFER_DELAY", "1")),
 )
+
 input_topic = app.topic(os.environ["input"])
+sdf = app.dataframe(input_topic)
 
 sdf = app.dataframe(input_topic)
 sdf.sink(influxdb_v3_sink)
 
+sdf = sdf.apply(clickhouse_sink)
 
 if __name__ == "__main__":
     app.run()
