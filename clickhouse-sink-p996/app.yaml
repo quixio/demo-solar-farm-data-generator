@@ -35,7 +35,7 @@ variables:
   - name: CLICKHOUSE_PORT
     inputType: FreeText
     multiline: false
-    defaultValue: 8443
+    defaultValue: 9000
     required: true
   - name: CLICKHOUSE_HOST
     inputType: FreeText
