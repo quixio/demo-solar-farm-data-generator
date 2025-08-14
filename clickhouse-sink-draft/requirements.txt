@@ -1,3 +1,0 @@
-quixstreams
-clickhouse-driver
-python-dotenv
