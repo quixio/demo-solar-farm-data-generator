@@ -53,12 +53,20 @@ variables:
 - name: Quix__Sdk__Token
   inputType: Secret
   required: true
-  value: ''
+  value:
+    value: ''
+    type: Secret
+    description: Quix SDK Token
+    required: true
   description: Quix SDK Token
 - name: Quix__Portal__Api
   inputType: FreeText
   required: true
-  value: ''
+  value:
+    value: ''
+    type: FreeText
+    description: Quix Portal API
+    required: true
   description: Quix Portal API
 - name: CLICKHOUSE_TOPIC
   inputType: Topic

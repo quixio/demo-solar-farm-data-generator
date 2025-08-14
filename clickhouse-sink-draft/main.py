@@ -79,35 +79,35 @@ def process_solar_data(message):
         
         # Convert timestamp from nanoseconds to datetime
         timestamp_ns = solar_data.get('timestamp', 0)
-        timestamp_dt = datetime.fromtimestamp(timestamp_ns / 1_000_000_000)
+        timestamp_dt = datetime.fromtimestamp(timestamp_ns / 1e9)
         
-        # Parse message datetime
-        message_datetime = datetime.fromisoformat(message.timestamp.replace('Z', '+00:00'))
+        # Convert message datetime
+        message_dt = datetime.fromisoformat(message.dateTime.replace('Z', '+00:00'))
         
         # Prepare data for insertion
-        insert_data = {
-            'panel_id': solar_data.get('panel_id', ''),
-            'location_id': solar_data.get('location_id', ''),
-            'location_name': solar_data.get('location_name', ''),
-            'latitude': solar_data.get('latitude', 0.0),
-            'longitude': solar_data.get('longitude', 0.0),
-            'timezone': solar_data.get('timezone', 0),
-            'power_output': solar_data.get('power_output', 0),
-            'unit_power': solar_data.get('unit_power', ''),
-            'temperature': solar_data.get('temperature', 0.0),
-            'unit_temp': solar_data.get('unit_temp', ''),
-            'irradiance': solar_data.get('irradiance', 0),
-            'unit_irradiance': solar_data.get('unit_irradiance', ''),
-            'voltage': solar_data.get('voltage', 0.0),
-            'unit_voltage': solar_data.get('unit_voltage', ''),
-            'current': solar_data.get('current', 0),
-            'unit_current': solar_data.get('unit_current', ''),
-            'inverter_status': solar_data.get('inverter_status', ''),
-            'timestamp': timestamp_dt,
-            'message_datetime': message_datetime
-        }
+        row_data = (
+            solar_data.get('panel_id', ''),
+            solar_data.get('location_id', ''),
+            solar_data.get('location_name', ''),
+            float(solar_data.get('latitude', 0.0)),
+            float(solar_data.get('longitude', 0.0)),
+            int(solar_data.get('timezone', 0)),
+            int(solar_data.get('power_output', 0)),
+            solar_data.get('unit_power', ''),
+            float(solar_data.get('temperature', 0.0)),
+            solar_data.get('unit_temp', ''),
+            int(solar_data.get('irradiance', 0)),
+            solar_data.get('unit_irradiance', ''),
+            float(solar_data.get('voltage', 0.0)),
+            solar_data.get('unit_voltage', ''),
+            int(solar_data.get('current', 0)),
+            solar_data.get('unit_current', ''),
+            solar_data.get('inverter_status', ''),
+            timestamp_dt,
+            message_dt
+        )
         
-        # Insert data into ClickHouse
+        # Insert into ClickHouse
         insert_sql = f"""
         INSERT INTO {table_name} (
             panel_id, location_id, location_name, latitude, longitude, timezone,
@@ -116,40 +116,30 @@ def process_solar_data(message):
         ) VALUES
         """
         
-        clickhouse_client.execute(insert_sql, [insert_data])
-        logger.info(f"Inserted data for panel {insert_data['panel_id']} at {timestamp_dt}")
-        
-        return message
+        clickhouse_client.execute(insert_sql, [row_data])
+        logger.info(f"Successfully inserted data for panel {solar_data.get('panel_id', 'unknown')}")
         
     except Exception as e:
         logger.error(f"Error processing message: {e}")
         raise
 
-# Create Quix application
+# Initialize Quix Application
 app = Application(
-    consumer_group=os.environ.get("CONSUMER_GROUP_NAME", "clickhouse-sink"),
-    auto_offset_reset="earliest",
-    commit_every=int(os.environ.get("BUFFER_SIZE", "100")),
-    commit_interval=float(os.environ.get("BUFFER_DELAY", "1")),
+    broker_address=os.environ.get("KAFKA_BROKER_ADDRESS"),
+    consumer_group="clickhouse-sink-draft",
+    auto_offset_reset="earliest"
 )
 
-input_topic = app.topic(os.environ.get("input", "solar-data"))
+input_topic = app.topic(os.environ.get("input_topic", "solar-data"))
 sdf = app.dataframe(input_topic)
 
-# Process and sink data
-sdf = sdf.apply(process_solar_data)
+# Create ClickHouse sink
+def clickhouse_sink(message):
+    process_solar_data(message)
+
+# Apply the sink
+sdf.sink(clickhouse_sink)
 
 if __name__ == "__main__":
-    try:
-        logger.info("Starting ClickHouse sink application")
-        app.run(count=10, timeout=20)
-    except KeyboardInterrupt:
-        logger.info("Application stopped by user")
-    except Exception as e:
-        logger.error(f"Application error: {e}")
-        raise
-    finally:
-        try:
-            clickhouse_client.disconnect()
-        except:
-            pass
+    logger.info("Starting ClickHouse sink application")
+    app.run(count=10, timeout=20)
