@@ -1,143 +1,199 @@
-# DEPENDENCIES:
-# pip install requests
-# pip install python-dotenv
-# END_DEPENDENCIES
-
 import os
 import requests
 import json
-from dotenv import load_dotenv
 import time
+import logging
+from datetime import datetime
+from quixstreams import Application
+from typing import Dict, Any, Optional
 
-# Load environment variables
-load_dotenv()
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Get environment variables
-api_key = os.environ.get('ALPHAVANTAGE_API_KEY', 'demo')
-api_url = os.environ.get('ALPHAVANTAGE_API_URL', 'https://www.alphavantage.co')
-
-def test_alphavantage_connection():
-    """
-    Test connection to Alpha Vantage API by fetching USD to EUR exchange rate
-    and recent forex data
-    """
-    
-    print("=" * 60)
-    print("Testing Alpha Vantage API Connection")
-    print("=" * 60)
-    
-    try:
-        # First, get the current exchange rate from USD to EUR
-        print("\n1. Fetching current USD to EUR exchange rate...")
-        exchange_url = f"{api_url}/query"
-        exchange_params = {
-            'function': 'CURRENCY_EXCHANGE_RATE',
-            'from_currency': 'USD',
-            'to_currency': 'EUR',
-            'apikey': api_key
-        }
+class AlphaVantageSource:
+    def __init__(self):
+        self.api_key = os.environ.get('ALPHAVANTAGE_API_KEY', 'demo')
+        self.api_url = os.environ.get('ALPHAVANTAGE_API_URL', 'https://www.alphavantage.co')
+        self.from_currency = os.environ.get('FROM_CURRENCY', 'USD')
+        self.to_currency = os.environ.get('TO_CURRENCY', 'EUR')
+        self.poll_interval = int(os.environ.get('POLL_INTERVAL', '60'))
+        self.max_messages = int(os.environ.get('MAX_MESSAGES', '100'))
+        self.message_count = 0
         
-        response = requests.get(exchange_url, params=exchange_params)
-        response.raise_for_status()
-        
-        exchange_data = response.json()
-        
-        # Print the exchange rate data
-        print("\n--- Exchange Rate Data ---")
-        print(json.dumps(exchange_data, indent=2))
-        
-        # Now fetch daily forex data to get 10 sample items
-        print("\n2. Fetching daily USD/EUR forex data for sample items...")
-        
-        # Add a small delay to avoid rate limiting
-        time.sleep(1)
-        
-        forex_params = {
-            'function': 'FX_DAILY',
-            'from_symbol': 'USD',
-            'to_symbol': 'EUR',
-            'apikey': api_key
-        }
-        
-        response = requests.get(exchange_url, params=forex_params)
-        response.raise_for_status()
-        
-        forex_data = response.json()
-        
-        # Check if we have the time series data
-        if 'Time Series FX (Daily)' in forex_data:
-            time_series = forex_data['Time Series FX (Daily)']
-            
-            print(f"\nTotal data points available: {len(time_series)}")
-            print("\n--- Sample of 10 Most Recent Daily USD/EUR Rates ---")
-            
-            # Get the dates and sort them in descending order
-            dates = sorted(time_series.keys(), reverse=True)[:10]
-            
-            for i, date in enumerate(dates, 1):
-                data_point = time_series[date]
-                print(f"\nItem {i}: {date}")
-                print(f"  Open:  {data_point.get('1. open', 'N/A')}")
-                print(f"  High:  {data_point.get('2. high', 'N/A')}")
-                print(f"  Low:   {data_point.get('3. low', 'N/A')}")
-                print(f"  Close: {data_point.get('4. close', 'N/A')}")
-                
-        elif 'Error Message' in forex_data:
-            print(f"\nAPI Error: {forex_data['Error Message']}")
-            
-        elif 'Note' in forex_data:
-            print(f"\nAPI Note (possibly rate limit): {forex_data['Note']}")
-            
-        else:
-            # If daily data is not available, try intraday
-            print("\n3. Attempting to fetch intraday USD/EUR data...")
-            time.sleep(1)
-            
-            intraday_params = {
-                'function': 'FX_INTRADAY',
-                'from_symbol': 'USD',
-                'to_symbol': 'EUR',
-                'interval': '5min',
-                'apikey': api_key
+    def get_exchange_rate(self) -> Optional[Dict[str, Any]]:
+        """Fetch current exchange rate from Alpha Vantage API"""
+        try:
+            url = f"{self.api_url}/query"
+            params = {
+                'function': 'CURRENCY_EXCHANGE_RATE',
+                'from_currency': self.from_currency,
+                'to_currency': self.to_currency,
+                'apikey': self.api_key
             }
             
-            response = requests.get(exchange_url, params=intraday_params)
+            response = requests.get(url, params=params, timeout=30)
             response.raise_for_status()
             
-            intraday_data = response.json()
+            data = response.json()
             
-            if 'Time Series FX (5min)' in intraday_data:
-                time_series = intraday_data['Time Series FX (5min)']
+            # Check for API error messages
+            if 'Error Message' in data:
+                logger.error(f"API Error: {data['Error Message']}")
+                return None
                 
-                print(f"\nTotal intraday data points available: {len(time_series)}")
-                print("\n--- Sample of 10 Most Recent 5-min USD/EUR Rates ---")
+            if 'Note' in data:
+                logger.warning(f"API Note: {data['Note']}")
+                return None
                 
-                # Get the timestamps and sort them in descending order
-                timestamps = sorted(time_series.keys(), reverse=True)[:10]
+            if 'Realtime Currency Exchange Rate' not in data:
+                logger.error(f"Unexpected API response format: {data}")
+                return None
                 
-                for i, timestamp in enumerate(timestamps, 1):
-                    data_point = time_series[timestamp]
-                    print(f"\nItem {i}: {timestamp}")
-                    print(f"  Open:  {data_point.get('1. open', 'N/A')}")
-                    print(f"  High:  {data_point.get('2. high', 'N/A')}")
-                    print(f"  Low:   {data_point.get('3. low', 'N/A')}")
-                    print(f"  Close: {data_point.get('4. close', 'N/A')}")
-            else:
-                print("\nUnable to fetch time series data. Response:")
-                print(json.dumps(intraday_data, indent=2))
-        
-        print("\n" + "=" * 60)
-        print("Connection test completed successfully!")
-        print("=" * 60)
-        
-    except requests.exceptions.RequestException as e:
-        print(f"\nError connecting to Alpha Vantage API: {e}")
-        
-    except json.JSONDecodeError as e:
-        print(f"\nError parsing JSON response: {e}")
-        
+            exchange_data = data['Realtime Currency Exchange Rate']
+            
+            # Transform to our schema format
+            message = {
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'value': float(exchange_data.get('5. Exchange Rate', 0.0)),
+                'metadata': {
+                    'from_currency': exchange_data.get('1. From_Currency Code'),
+                    'to_currency': exchange_data.get('3. To_Currency Code'),
+                    'last_refreshed': exchange_data.get('6. Last Refreshed'),
+                    'timezone': exchange_data.get('7. Time Zone'),
+                    'bid_price': float(exchange_data.get('8. Bid Price', 0.0)),
+                    'ask_price': float(exchange_data.get('9. Ask Price', 0.0)),
+                    'source': 'alphavantage'
+                }
+            }
+            
+            return message
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error: {e}")
+            return None
+        except (ValueError, KeyError) as e:
+            logger.error(f"Data parsing error: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            return None
+    
+    def get_forex_data(self) -> Optional[Dict[str, Any]]:
+        """Fetch intraday forex data as alternative data source"""
+        try:
+            url = f"{self.api_url}/query"
+            params = {
+                'function': 'FX_INTRADAY',
+                'from_symbol': self.from_currency,
+                'to_symbol': self.to_currency,
+                'interval': '5min',
+                'apikey': self.api_key
+            }
+            
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if 'Error Message' in data or 'Note' in data:
+                return None
+                
+            time_series_key = f'Time Series FX (5min)'
+            if time_series_key not in data:
+                return None
+                
+            time_series = data[time_series_key]
+            
+            # Get the most recent data point
+            latest_time = max(time_series.keys())
+            latest_data = time_series[latest_time]
+            
+            message = {
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'value': float(latest_data.get('4. close', 0.0)),
+                'metadata': {
+                    'from_currency': self.from_currency,
+                    'to_currency': self.to_currency,
+                    'data_time': latest_time,
+                    'open': float(latest_data.get('1. open', 0.0)),
+                    'high': float(latest_data.get('2. high', 0.0)),
+                    'low': float(latest_data.get('3. low', 0.0)),
+                    'close': float(latest_data.get('4. close', 0.0)),
+                    'source': 'alphavantage_intraday'
+                }
+            }
+            
+            return message
+            
+        except Exception as e:
+            logger.error(f"Error fetching forex data: {e}")
+            return None
+
+def main():
+    # Initialize Quix Streams application
+    app = Application(
+        broker_address=os.environ.get('KAFKA_BROKER_ADDRESS', 'localhost:9092'),
+        consumer_group=os.environ.get('CONSUMER_GROUP', 'alphavantage-source'),
+        auto_offset_reset="latest"
+    )
+    
+    # Create output topic
+    topic = app.topic(
+        name=os.environ.get('OUTPUT_TOPIC', 'special-data'),
+        value_serializer='json'
+    )
+    
+    # Initialize Alpha Vantage source
+    source = AlphaVantageSource()
+    
+    logger.info(f"Starting Alpha Vantage source application")
+    logger.info(f"Output topic: {topic.name}")
+    logger.info(f"Poll interval: {source.poll_interval} seconds")
+    logger.info(f"Max messages: {source.max_messages}")
+    
+    try:
+        with app.get_producer() as producer:
+            while source.message_count < source.max_messages:
+                try:
+                    # Try to get exchange rate first
+                    message = source.get_exchange_rate()
+                    
+                    # If exchange rate fails, try forex data
+                    if message is None:
+                        logger.info("Exchange rate failed, trying forex data...")
+                        time.sleep(2)  # Brief delay between API calls
+                        message = source.get_forex_data()
+                    
+                    if message is not None:
+                        # Produce message to Kafka topic
+                        producer.produce(
+                            topic=topic.name,
+                            key=f"{message['metadata']['from_currency']}-{message['metadata']['to_currency']}",
+                            value=message
+                        )
+                        
+                        source.message_count += 1
+                        logger.info(f"Sent message {source.message_count}: {message['metadata']['from_currency']}/{message['metadata']['to_currency']} = {message['value']}")
+                        
+                    else:
+                        logger.warning("No data received from Alpha Vantage API")
+                    
+                    # Wait before next poll
+                    time.sleep(source.poll_interval)
+                    
+                except KeyboardInterrupt:
+                    logger.info("Received interrupt signal, shutting down...")
+                    break
+                except Exception as e:
+                    logger.error(f"Error in main loop: {e}")
+                    time.sleep(5)  # Brief pause before retrying
+                    
     except Exception as e:
-        print(f"\nUnexpected error: {e}")
+        logger.error(f"Fatal error: {e}")
+        raise
+    
+    logger.info(f"Application completed. Sent {source.message_count} messages.")
 
 if __name__ == "__main__":
-    test_alphavantage_connection()
+    main()
