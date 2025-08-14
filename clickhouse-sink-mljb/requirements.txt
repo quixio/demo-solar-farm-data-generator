@@ -1,4 +1,0 @@
-quixstreams[influxdb3]==3.22.0
-python-dotenv
-quixstreams
-clickhouse-driver
