@@ -1,3 +1,6 @@
+Based on the Python code analysis, here are the packages that need to be installed via pip:
+```
 quixstreams
 clickhouse-driver
 python-dotenv
+```
