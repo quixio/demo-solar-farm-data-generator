@@ -1,2 +1,6 @@
-quixstreams[influxdb3]==3.16.1
+Based on the Python code analysis, here are the packages that need to be installed via pip:
+```
+quixstreams
+clickhouse-driver
 python-dotenv
+```
