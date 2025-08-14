@@ -35,9 +35,69 @@ app = Application(
 )
 input_topic = app.topic(os.environ["input"])
 
-sdf = app.dataframe(input_topic)
-sdf.sink(influxdb_v3_sink)
+def process_solar_data(message):
+    print(f'Raw message: {message}')
+    
+    try:
+        # Parse the JSON string in the value field
+        if isinstance(message.get('value'), str):
+            data = json.loads(message['value'])
+        else:
+            data = message.get('value', {})
+        
+        # Convert timestamp from nanoseconds to datetime
+        timestamp_ns = data.get('timestamp', 0)
+        timestamp_dt = datetime.fromtimestamp(timestamp_ns / 1_000_000_000)
+        
+        # Convert message datetime
+        message_datetime = datetime.fromisoformat(message.get('dateTime', '').replace('Z', '+00:00'))
+        
+        # Prepare data for ClickHouse
+        row_data = {
+            'panel_id': data.get('panel_id', ''),
+            'location_id': data.get('location_id', ''),
+            'location_name': data.get('location_name', ''),
+            'latitude': float(data.get('latitude', 0.0)),
+            'longitude': float(data.get('longitude', 0.0)),
+            'timezone': int(data.get('timezone', 0)),
+            'power_output': int(data.get('power_output', 0)),
+            'unit_power': data.get('unit_power', ''),
+            'temperature': float(data.get('temperature', 0.0)),
+            'unit_temp': data.get('unit_temp', ''),
+            'irradiance': int(data.get('irradiance', 0)),
+            'unit_irradiance': data.get('unit_irradiance', ''),
+            'voltage': float(data.get('voltage', 0.0)),
+            'unit_voltage': data.get('unit_voltage', ''),
+            'current': int(data.get('current', 0)),
+            'unit_current': data.get('unit_current', ''),
+            'inverter_status': data.get('inverter_status', ''),
+            'timestamp': timestamp_dt,
+            'message_datetime': message_datetime
+        }
+        
+        # Insert into ClickHouse
+        insert_sql = f"""
+        INSERT INTO {table_name} (
+            panel_id, location_id, location_name, latitude, longitude, timezone,
+            power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
+            voltage, unit_voltage, current, unit_current, inverter_status, timestamp, message_datetime
+        ) VALUES
+        """
+        
+        clickhouse_client.execute(insert_sql, [row_data])
+        logger.info(f"Successfully inserted data for panel {row_data['panel_id']}")
+        
+    except Exception as e:
+        logger.error(f"Error processing message: {e}")
+        logger.error(f"Message content: {message}")
 
+# Create ClickHouse sink
+def clickhouse_sink(message):
+    process_solar_data(message)
+
+# Apply the sink to the dataframe
+sdf.sink(clickhouse_sink)
 
 if __name__ == "__main__":
-    app.run()
+    logger.info("Starting ClickHouse sink application")
+    app.run(count=10, timeout=20)
