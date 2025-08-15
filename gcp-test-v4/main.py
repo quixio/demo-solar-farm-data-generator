@@ -307,7 +307,7 @@ def main():
         return row
 
     # Apply debugging transformation and print metadata
-    sdf = sdf.apply(debug_message).print(metadata=True)
+    # sdf = sdf.apply(debug_message).print(metadata=True)
 
     # Sink the data to GCS CSV
     sdf.sink(solar_sink)
