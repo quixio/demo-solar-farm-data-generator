@@ -18,8 +18,6 @@ variables:
     inputType: FreeText
     defaultValue: quix-workflow
     required: true
-  - name: GCLOUD_PK_JSON
-    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
