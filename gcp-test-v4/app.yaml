@@ -14,7 +14,8 @@ variables:
     defaultValue: solar_data/solar_sensor_data.csv
     required: true
   - name: GOOGLE_APPLICATION_CREDENTIALS
-    inputType: FreeText
+    inputType: Secret
+    multiline: false
     defaultValue: GCLOUD_PK_JSON
     required: true
 dockerfile: dockerfile
