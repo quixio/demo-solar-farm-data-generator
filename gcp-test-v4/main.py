@@ -303,7 +303,7 @@ def main():
     # Add debugging to see raw message structure
     def debug_message(row):
         # logger.info(f"Received raw message: {row}")
-        logger.info(f"Message type: {type(row)}")
+        # logger.info(f"Message type: {type(row)}")
         return row
 
     # Apply debugging transformation and print metadata
