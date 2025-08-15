@@ -12,7 +12,7 @@ import logging
 from datetime import datetime
 from io import StringIO
 from google.cloud import storage
-from google.api_core.exceptions import GoogleCloudError
+from google.api_core import exceptions as gcp_exceptions
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -164,7 +164,7 @@ class GCSSolarDataSink(BatchingSink):
             blob.upload_from_string(csv_content, content_type='text/csv')
             logger.info(f"Successfully uploaded CSV to gs://{self.bucket_name}/{blob_path}")
             
-        except GoogleCloudError as e:
+        except (gcp_exceptions.GoogleAPICallError, gcp_exceptions.RetryError) as e:
             logger.error(f"Google Cloud Storage error: {str(e)}")
             raise
         except Exception as e:
@@ -211,7 +211,7 @@ class GCSSolarDataSink(BatchingSink):
                 logger.info(f"Successfully processed batch of {len(rows)} records")
                 return
                 
-            except GoogleCloudError as e:
+            except (gcp_exceptions.GoogleAPICallError, gcp_exceptions.RetryError) as e:
                 if "429" in str(e) or "quota" in str(e).lower():
                     # Rate limiting - use backpressure
                     logger.warning(f"GCS rate limiting detected: {str(e)}")
