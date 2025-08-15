@@ -10,9 +10,15 @@ import json
 import csv
 import io
 from datetime import datetime
-from google.cloud import storage
-from google.auth.exceptions import GoogleAuthError
 import logging
+
+try:
+    from google.cloud import storage
+    from google.auth.exceptions import GoogleAuthError
+except ImportError as e:
+    logging.error(f"Failed to import Google Cloud libraries: {e}")
+    logging.error("Please ensure google-cloud-storage is installed: pip install google-cloud-storage")
+    raise
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
@@ -38,6 +44,7 @@ class GoogleStorageCSVSink(BatchingSink):
         # Get environment variables
         self.bucket_name = os.environ.get("GCS_BUCKET_NAME")
         self.credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        self.credentials_json = os.environ.get("GCLOUD_PK_JSON")
         self.file_prefix = os.environ.get("GCS_FILE_PREFIX", "solar_data")
         
         # Validate required environment variables
@@ -45,6 +52,15 @@ class GoogleStorageCSVSink(BatchingSink):
             raise ValueError("GCS_BUCKET_NAME environment variable is required")
         
         logger.info(f"Initializing Google Storage CSV Sink for bucket: {self.bucket_name}")
+        
+        # Debug: Log available credential methods
+        if self.credentials_json:
+            logger.info("Found GCLOUD_PK_JSON environment variable")
+        if self.credentials_path:
+            logger.info(f"Found GOOGLE_APPLICATION_CREDENTIALS: {self.credentials_path}")
+            logger.info(f"Credentials file exists: {os.path.exists(self.credentials_path) if self.credentials_path else False}")
+        if not self.credentials_json and not self.credentials_path:
+            logger.info("No explicit credentials found, will try default application credentials")
         
         # Initialize the storage client
         self.client = None
@@ -64,27 +80,60 @@ class GoogleStorageCSVSink(BatchingSink):
         try:
             logger.info("Setting up Google Cloud Storage client...")
             
-            # Initialize the storage client
-            if self.credentials_path:
+            # Initialize the storage client with proper credential handling
+            if self.credentials_json:
+                # Parse JSON credentials from environment variable
+                logger.info("Using JSON credentials from environment variable")
+                try:
+                    credentials_info = json.loads(self.credentials_json)
+                    self.client = storage.Client.from_service_account_info(credentials_info)
+                except json.JSONDecodeError:
+                    logger.error("GCLOUD_PK_JSON environment variable contains invalid JSON")
+                    raise
+            elif self.credentials_path and os.path.exists(self.credentials_path):
+                # Use service account file if it exists
+                logger.info("Using service account file")
                 self.client = storage.Client.from_service_account_json(self.credentials_path)
+            elif self.credentials_path and not os.path.exists(self.credentials_path):
+                # File path specified but doesn't exist
+                logger.error(f"Credentials file not found: {self.credentials_path}")
+                logger.error("Please ensure the file exists or use one of the other credential methods")
+                raise FileNotFoundError(f"Credentials file not found: {self.credentials_path}")
             else:
-                # Use default credentials (ADC)
+                # Use default credentials (ADC) - this works in cloud environments
+                logger.info("Using default application credentials")
                 self.client = storage.Client()
             
             # Get the bucket reference
             self.bucket = self.client.bucket(self.bucket_name)
             
             # Test bucket access
-            if not self.bucket.exists():
-                raise Exception(f"Bucket '{self.bucket_name}' does not exist or is not accessible")
-            
-            logger.info(f"Successfully connected to GCS bucket: {self.bucket_name}")
+            try:
+                # Just try to get bucket metadata instead of exists() which may be slower
+                self.bucket.reload()
+                logger.info(f"Successfully connected to GCS bucket: {self.bucket_name}")
+            except Exception as bucket_error:
+                logger.error(f"Cannot access bucket '{self.bucket_name}': {bucket_error}")
+                # Don't fail completely - the bucket might be accessible for writing even if metadata read fails
+                logger.warning("Continuing without bucket validation - write operations will be tested during actual usage")
             
         except GoogleAuthError as e:
             logger.error(f"Google Cloud authentication failed: {e}")
+            logger.error("Please check your credentials. Available options:")
+            logger.error("1. Set GCLOUD_PK_JSON environment variable with service account JSON content")
+            logger.error("2. Set GOOGLE_APPLICATION_CREDENTIALS environment variable with path to service account file")
+            logger.error("3. Use default application credentials (recommended for cloud environments)")
+            raise
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON credentials: {e}")
+            logger.error("The GCLOUD_PK_JSON environment variable does not contain valid JSON")
             raise
         except Exception as e:
             logger.error(f"Failed to setup Google Cloud Storage client: {e}")
+            logger.error("Please verify:")
+            logger.error("- Credentials are properly configured")
+            logger.error("- The specified bucket exists and is accessible")
+            logger.error("- Network connectivity to Google Cloud Storage")
             raise
 
     def _parse_message_value(self, message_value):
@@ -200,6 +249,11 @@ class GoogleStorageCSVSink(BatchingSink):
     def _write_to_gcs(self, data, batch):
         """Write the data to Google Cloud Storage"""
         try:
+            # Ensure client and bucket are initialized
+            if not self.client or not self.bucket:
+                logger.error("GCS client or bucket not properly initialized")
+                raise Exception("GCS client or bucket not properly initialized")
+            
             # Create CSV content
             csv_content = self._create_csv_content(data)
             
@@ -238,6 +292,9 @@ def main():
         
         # Initialize the GCS CSV sink
         gcs_sink = GoogleStorageCSVSink()
+        
+        # Setup the GCS sink - ensure it's properly initialized
+        gcs_sink.setup()
         
         # Setup the input topic - use JSON deserializer to handle the nested JSON structure
         input_topic = app.topic(
