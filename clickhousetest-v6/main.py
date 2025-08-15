@@ -6,13 +6,22 @@ from quixstreams.sinks import BatchingSink, SinkBatch, SinkBackpressureError
 
 import os
 import time
+import logging
+from datetime import datetime
+from typing import List, Dict, Any
+import clickhouse_connect
+import json
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
 # load_dotenv()
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-class MyDatabaseSink(BatchingSink):
+
+class ClickHouseSolarDataSink(BatchingSink):
     """
     Sinks are a way of writing data from a Kafka topic to a non-Kafka destination,
     often some sort of database or file.
