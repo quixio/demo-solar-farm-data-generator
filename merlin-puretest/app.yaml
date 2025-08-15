@@ -8,8 +8,9 @@ variables:
     defaultValue: solar-data
   - name: output
     inputType: OutputTopic
+    multiline: false
     description: Name of the output topic to write to.
-    defaultValue: transform
+    defaultValue: bucket-output
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
