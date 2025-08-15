@@ -10,7 +10,8 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any
 import clickhouse_connect
-from clickhouse_connect.driver.exceptions import DatabaseError, NetworkError
+from clickhouse_connect.driver.exceptions import DatabaseError
+from requests.exceptions import RequestException, Timeout, ConnectionError as RequestsConnectionError
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
@@ -174,8 +175,22 @@ class ClickHouseSolarSink(BatchingSink):
                 self._write_to_clickhouse(data)
                 return
                 
-            except (NetworkError, ConnectionError) as e:
-                logger.warning(f"Network/Connection error (attempt {attempt + 1}/{max_attempts}): {e}")
+            except ConnectionError as e:
+                logger.warning(f"Connection error (attempt {attempt + 1}/{max_attempts}): {e}")
+                if attempt < max_attempts - 1:
+                    delay = base_delay * (2 ** attempt)
+                    time.sleep(delay)
+                    # Try to reconnect
+                    try:
+                        self._initialize_client()
+                    except Exception as reconnect_error:
+                        logger.error(f"Failed to reconnect: {reconnect_error}")
+                else:
+                    raise ConnectionError(f"Failed to write to ClickHouse after {max_attempts} attempts")
+            
+            except (OSError, TimeoutError) as e:
+                # Handle network-related OS errors (socket errors, timeouts, etc.)
+                logger.warning(f"Network/Timeout error (attempt {attempt + 1}/{max_attempts}): {e}")
                 if attempt < max_attempts - 1:
                     delay = base_delay * (2 ** attempt)
                     time.sleep(delay)
