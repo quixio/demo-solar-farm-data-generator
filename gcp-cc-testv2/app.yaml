@@ -4,7 +4,23 @@ variables:
   - name: input
     inputType: InputTopic
     description: Name of the input topic to listen to.
-    defaultValue: transform
+    defaultValue: solar-data
+  - name: GOOGLE_APPLICATION_CREDENTIALS
+    inputType: FreeText
+    defaultValue: GCLOUD_PK_JSON
+    required: true
+  - name: GCS_BUCKET_NAME
+    inputType: FreeText
+    defaultValue: quix-workflow
+    required: true
+  - name: TESTING_MODE
+    inputType: FreeText
+    defaultValue: true
+    required: true
+  - name: GCS_FOLDER_PATH
+    inputType: FreeText
+    defaultValue: /
+    required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
