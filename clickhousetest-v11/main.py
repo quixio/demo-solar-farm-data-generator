@@ -37,15 +37,29 @@ class ClickHouseSink(BatchingSink):
     def _setup_connection(self):
         """Initialize ClickHouse connection"""
         try:
+            # Get connection parameters from environment
+            host = os.environ["CLICKHOUSE_HOST"]
+            port = int(os.environ.get("CLICKHOUSE_PORT", "8123"))
+            username = os.environ.get("CLICKHOUSE_USERNAME", "default")
+            password = os.environ.get("CLICKHOUSE_PASSWORD", "")
+            database = os.environ.get("CLICKHOUSE_DATABASE", "default")
+            secure = os.environ.get("CLICKHOUSE_SECURE", "false").lower() == "true"
+            
+            logger.info(f"Connecting to ClickHouse at {host}:{port} (secure={secure})")
+            
             self.client = clickhouse_connect.get_client(
-                host=os.environ["CLICKHOUSE_HOST"],
-                port=int(os.environ.get("CLICKHOUSE_PORT", "8123")),
-                username=os.environ.get("CLICKHOUSE_USERNAME", "default"),
-                password=os.environ.get("CLICKHOUSE_PASSWORD", ""),
-                database=os.environ.get("CLICKHOUSE_DATABASE", "default"),
-                secure=os.environ.get("CLICKHOUSE_SECURE", "false").lower() == "true"
+                host=host,
+                port=port,
+                username=username,
+                password=password,
+                database=database,
+                secure=secure
             )
-            logger.info("ClickHouse connection established successfully")
+            
+            # Test the connection
+            result = self.client.command("SELECT 1")
+            logger.info(f"ClickHouse connection test successful: {result}")
+            
             self._create_table_if_not_exists()
         except Exception as e:
             logger.error(f"Failed to connect to ClickHouse: {e}")
@@ -86,7 +100,7 @@ class ClickHouseSink(BatchingSink):
         """
         
         try:
-            self.client.execute(create_table_sql)
+            self.client.command(create_table_sql)
             logger.info(f"Table {table_name} created or already exists")
         except Exception as e:
             logger.error(f"Failed to create table: {e}")
@@ -123,33 +137,48 @@ class ClickHouseSink(BatchingSink):
                 logger.error(f"Unexpected message value type: {type(item.value)}")
                 raise ValueError(f"Cannot parse message value of type {type(item.value)}")
             
-            # Convert Kafka timestamp to datetime
-            kafka_timestamp = datetime.fromtimestamp(item.timestamp / 1000.0)
+            # Convert Kafka timestamp to datetime (handle both milliseconds and nanoseconds)
+            if item.timestamp > 1e12:  # Likely nanoseconds
+                kafka_timestamp = datetime.fromtimestamp(item.timestamp / 1e9)
+            else:  # Likely milliseconds
+                kafka_timestamp = datetime.fromtimestamp(item.timestamp / 1000.0)
             
-            # Extract data with safe defaults
+            # Extract data with safe defaults and type conversion
+            def safe_float(value, default=0.0):
+                try:
+                    return float(value) if value is not None else default
+                except (ValueError, TypeError):
+                    return default
+                    
+            def safe_int(value, default=0):
+                try:
+                    return int(value) if value is not None else default
+                except (ValueError, TypeError):
+                    return default
+            
             parsed_data = {
                 'kafka_timestamp': kafka_timestamp,
-                'kafka_partition': item.partition,
-                'kafka_offset': item.offset,
+                'kafka_partition': item.partition if item.partition is not None else 0,
+                'kafka_offset': item.offset if item.offset is not None else 0,
                 'kafka_key': str(item.key) if item.key is not None else '',
-                'panel_id': sensor_data.get('panel_id', ''),
-                'location_id': sensor_data.get('location_id', ''),
-                'location_name': sensor_data.get('location_name', ''),
-                'latitude': float(sensor_data.get('latitude', 0.0)),
-                'longitude': float(sensor_data.get('longitude', 0.0)),
-                'timezone': int(sensor_data.get('timezone', 0)),
-                'power_output': float(sensor_data.get('power_output', 0.0)),
-                'unit_power': sensor_data.get('unit_power', 'W'),
-                'temperature': float(sensor_data.get('temperature', 0.0)),
-                'unit_temp': sensor_data.get('unit_temp', 'C'),
-                'irradiance': float(sensor_data.get('irradiance', 0.0)),
-                'unit_irradiance': sensor_data.get('unit_irradiance', 'W/m²'),
-                'voltage': float(sensor_data.get('voltage', 0.0)),
-                'unit_voltage': sensor_data.get('unit_voltage', 'V'),
-                'current': float(sensor_data.get('current', 0.0)),
-                'unit_current': sensor_data.get('unit_current', 'A'),
-                'inverter_status': sensor_data.get('inverter_status', 'UNKNOWN'),
-                'sensor_timestamp': int(sensor_data.get('timestamp', 0))
+                'panel_id': str(sensor_data.get('panel_id', '')),
+                'location_id': str(sensor_data.get('location_id', '')),
+                'location_name': str(sensor_data.get('location_name', '')),
+                'latitude': safe_float(sensor_data.get('latitude'), 0.0),
+                'longitude': safe_float(sensor_data.get('longitude'), 0.0),
+                'timezone': safe_int(sensor_data.get('timezone'), 0),
+                'power_output': safe_float(sensor_data.get('power_output'), 0.0),
+                'unit_power': str(sensor_data.get('unit_power', 'W')),
+                'temperature': safe_float(sensor_data.get('temperature'), 0.0),
+                'unit_temp': str(sensor_data.get('unit_temp', 'C')),
+                'irradiance': safe_float(sensor_data.get('irradiance'), 0.0),
+                'unit_irradiance': str(sensor_data.get('unit_irradiance', 'W/m²')),
+                'voltage': safe_float(sensor_data.get('voltage'), 0.0),
+                'unit_voltage': str(sensor_data.get('unit_voltage', 'V')),
+                'current': safe_float(sensor_data.get('current'), 0.0),
+                'unit_current': str(sensor_data.get('unit_current', 'A')),
+                'inverter_status': str(sensor_data.get('inverter_status', 'UNKNOWN')),
+                'sensor_timestamp': safe_int(sensor_data.get('timestamp'), 0)
             }
             
             return parsed_data
@@ -223,9 +252,13 @@ class ClickHouseSink(BatchingSink):
                             time.sleep(3)
                             # Re-establish connection
                             try:
+                                logger.info("Re-establishing ClickHouse connection...")
                                 self._setup_connection()
+                                logger.info("Connection re-established successfully")
                             except Exception as setup_error:
                                 logger.error(f"Failed to re-establish connection: {setup_error}")
+                                if attempts_remaining == 1:
+                                    raise setup_error
                         continue
                     elif "too many requests" in str(e).lower() or "rate limit" in str(e).lower():
                         # Handle backpressure
@@ -297,6 +330,14 @@ def main():
     if missing_vars:
         logger.error(f"Missing required environment variables: {missing_vars}")
         raise EnvironmentError(f"Missing required environment variables: {missing_vars}")
+    
+    # Log environment configuration (without sensitive data)
+    logger.info(f"Input topic: {os.environ['input']}")
+    logger.info(f"ClickHouse host: {os.environ['CLICKHOUSE_HOST']}")
+    logger.info(f"ClickHouse port: {os.environ.get('CLICKHOUSE_PORT', '8123')}")
+    logger.info(f"ClickHouse database: {os.environ.get('CLICKHOUSE_DATABASE', 'default')}")
+    logger.info(f"ClickHouse table: {os.environ.get('CLICKHOUSE_TABLE', 'solar_panel_data')}")
+    logger.info(f"ClickHouse secure: {os.environ.get('CLICKHOUSE_SECURE', 'false')}")
     
     # Setup application
     app = Application(
