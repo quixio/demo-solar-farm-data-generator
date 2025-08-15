@@ -121,43 +121,19 @@ class ClickHouseSink(BatchingSink):
 
     def _parse_message_data(self, batch_item):
         """
-        Parse the complex nested message structure from Kafka.
+        Parse the message data from Kafka SinkItem.
         
-        Based on the schema analysis, messages have this structure:
-        - Top level fields: topicId, topicName, streamId, type, value, dateTime, partition, offset, headers
-        - The actual sensor data is in the 'value' field as a JSON string
+        Based on the actual logs, the data comes in this format:
+        batch_item.value is already the sensor data dictionary
         """
         try:
-            # Get the raw message value
-            message_data = batch_item.value
+            # Get the raw message value - this is already the parsed sensor data
+            sensor_data = batch_item.value
             
             # Debug: Print raw message structure for the first few messages
-            logger.debug(f"Raw message structure: {type(message_data)} - {message_data}")
+            logger.debug(f"Raw message structure: {type(sensor_data)} - {sensor_data}")
             
-            # Handle case where message_data is already parsed JSON (dict)
-            if isinstance(message_data, dict):
-                # Extract the nested JSON from the 'value' field
-                if 'value' in message_data and isinstance(message_data['value'], str):
-                    # Parse the JSON string in the 'value' field
-                    sensor_data = json.loads(message_data['value'])
-                elif 'value' in message_data and isinstance(message_data['value'], dict):
-                    # Value is already parsed
-                    sensor_data = message_data['value']
-                else:
-                    # Assume the message_data is the sensor data directly
-                    sensor_data = message_data
-                
-                # Extract metadata from top level if available
-                stream_id = message_data.get('streamId', '')
-                kafka_datetime = message_data.get('dateTime', '')
-            else:
-                # If message_data is a string, parse it as JSON
-                parsed_message = json.loads(message_data)
-                sensor_data = json.loads(parsed_message.get('value', '{}'))
-                stream_id = parsed_message.get('streamId', '')
-                kafka_datetime = parsed_message.get('dateTime', '')
-            
-            # Convert timestamp from Unix nanoseconds to datetime
+            # Extract sensor timestamp
             sensor_timestamp_ns = sensor_data.get('timestamp', 0)
             if sensor_timestamp_ns > 0:
                 # Convert from nanoseconds to seconds for datetime
@@ -165,22 +141,28 @@ class ClickHouseSink(BatchingSink):
             else:
                 sensor_timestamp = datetime.now()
             
-            # Convert Kafka datetime string to datetime object
-            if kafka_datetime:
-                try:
-                    kafka_timestamp = datetime.fromisoformat(kafka_datetime.replace('Z', '+00:00'))
-                except:
-                    kafka_timestamp = datetime.now()
-            else:
+            # Get Kafka timestamp - use timestamp from SinkItem if available
+            if hasattr(batch_item, 'timestamp') and batch_item.timestamp:
                 kafka_timestamp = datetime.fromtimestamp(batch_item.timestamp / 1000)
+            else:
+                kafka_timestamp = datetime.now()
+            
+            # Get Kafka metadata - use getattr with defaults since SinkItem may not have all attributes
+            kafka_topic = getattr(batch_item, 'topic', os.environ.get('input', 'solar-data'))
+            kafka_partition = getattr(batch_item, 'partition', 0)
+            kafka_offset = getattr(batch_item, 'offset', 0)
+            kafka_key = str(getattr(batch_item, 'key', b'')).replace("b'", "").replace("'", "")
+            
+            # Extract stream_id from location_id as fallback
+            stream_id = sensor_data.get('location_id', '')
             
             # Prepare the row data for ClickHouse
             row_data = {
                 'kafka_timestamp': kafka_timestamp,
-                'kafka_topic': batch_item.topic,
-                'kafka_partition': batch_item.partition,
-                'kafka_offset': batch_item.offset,
-                'kafka_key': str(batch_item.key) if batch_item.key else '',
+                'kafka_topic': kafka_topic,
+                'kafka_partition': kafka_partition,
+                'kafka_offset': kafka_offset,
+                'kafka_key': kafka_key,
                 'stream_id': stream_id,
                 'panel_id': sensor_data.get('panel_id', ''),
                 'location_id': sensor_data.get('location_id', ''),
@@ -259,8 +241,8 @@ class ClickHouseSink(BatchingSink):
                 else:
                     raise SinkBackpressureError(
                         retry_after=30.0,
-                        topic=batch.topic,
-                        partition=batch.partition,
+                        topic=getattr(batch, 'topic', os.environ.get('input', 'solar-data')),
+                        partition=getattr(batch, 'partition', 0),
                     )
                     
             except ClickHouseError as e:
@@ -273,8 +255,8 @@ class ClickHouseSink(BatchingSink):
                     # For ClickHouse-specific errors, raise backpressure
                     raise SinkBackpressureError(
                         retry_after=60.0,
-                        topic=batch.topic,
-                        partition=batch.partition,
+                        topic=getattr(batch, 'topic', os.environ.get('input', 'solar-data')),
+                        partition=getattr(batch, 'partition', 0),
                     )
                     
             except Exception as e:
@@ -301,14 +283,6 @@ def debug_message_structure(row):
     print(f"DEBUG - Message content (first 500 chars): {str(row)[:500]}")
     if isinstance(row, dict):
         print(f"DEBUG - Message keys: {list(row.keys())}")
-        if 'value' in row:
-            print(f"DEBUG - Value type: {type(row['value'])}")
-            if isinstance(row['value'], str):
-                try:
-                    parsed_value = json.loads(row['value'])
-                    print(f"DEBUG - Parsed value keys: {list(parsed_value.keys()) if isinstance(parsed_value, dict) else 'Not a dict'}")
-                except:
-                    print("DEBUG - Value is not valid JSON")
     return row
 
 
@@ -365,12 +339,10 @@ def main():
     # Sink to ClickHouse
     sdf.sink(clickhouse_sink)
 
-    # For initial testing, run with limits
+    # Run the application
     try:
-        # For testing: limit to 10 messages with 20 second timeout
-        # Remove or modify these parameters for production use
-        logger.info("Running application with limits: count=10, timeout=20 seconds")
-        app.run(count=10, timeout=20)
+        logger.info("Starting application - running continuously")
+        app.run()
     except KeyboardInterrupt:
         logger.info("Application stopped by user")
     except Exception as e:
