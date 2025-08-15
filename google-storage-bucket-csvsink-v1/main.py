@@ -15,9 +15,11 @@ import logging
 try:
     from google.cloud import storage
     from google.auth.exceptions import GoogleAuthError
+    from google.api_core.exceptions import GoogleAPICallError
 except ImportError as e:
     logging.error(f"Failed to import Google Cloud libraries: {e}")
-    logging.error("Please ensure google-cloud-storage is installed: pip install google-cloud-storage")
+    logging.error("Please ensure google-cloud-storage and dependencies are installed:")
+    logging.error("pip install google-cloud-storage google-auth google-api-core")
     raise
 
 # for local dev, you can load env vars from a .env file
@@ -55,10 +57,17 @@ class GoogleStorageCSVSink(BatchingSink):
         
         # Debug: Log available credential methods
         if self.credentials_json:
-            logger.info("Found GCLOUD_PK_JSON environment variable")
+            logger.info("Found GCLOUD_PK_JSON environment variable (JSON credentials)")
+            # Log first few characters for debugging (don't log full credentials!)
+            logger.info(f"GCLOUD_PK_JSON starts with: {str(self.credentials_json)[:50]}...")
         if self.credentials_path:
             logger.info(f"Found GOOGLE_APPLICATION_CREDENTIALS: {self.credentials_path}")
-            logger.info(f"Credentials file exists: {os.path.exists(self.credentials_path) if self.credentials_path else False}")
+            # Don't just check existence - also validate it's not the same as the JSON env var name
+            if self.credentials_path != "GCLOUD_PK_JSON":
+                logger.info(f"Credentials file exists: {os.path.exists(self.credentials_path) if self.credentials_path else False}")
+            else:
+                logger.warning("GOOGLE_APPLICATION_CREDENTIALS is set to 'GCLOUD_PK_JSON' - this suggests configuration error")
+                logger.info("Will prioritize GCLOUD_PK_JSON environment variable instead")
         if not self.credentials_json and not self.credentials_path:
             logger.info("No explicit credentials found, will try default application credentials")
         
@@ -81,28 +90,39 @@ class GoogleStorageCSVSink(BatchingSink):
             logger.info("Setting up Google Cloud Storage client...")
             
             # Initialize the storage client with proper credential handling
+            # Priority: 1. JSON credentials 2. Service account file 3. Default credentials
             if self.credentials_json:
                 # Parse JSON credentials from environment variable
-                logger.info("Using JSON credentials from environment variable")
+                logger.info("Using JSON credentials from GCLOUD_PK_JSON environment variable")
                 try:
-                    credentials_info = json.loads(self.credentials_json)
+                    # Ensure we have a string and not None
+                    credentials_json_str = str(self.credentials_json).strip()
+                    credentials_info = json.loads(credentials_json_str)
                     self.client = storage.Client.from_service_account_info(credentials_info)
-                except json.JSONDecodeError:
-                    logger.error("GCLOUD_PK_JSON environment variable contains invalid JSON")
+                    logger.info("Successfully initialized GCS client with JSON credentials")
+                except json.JSONDecodeError as e:
+                    logger.error(f"GCLOUD_PK_JSON environment variable contains invalid JSON: {e}")
+                    logger.error(f"JSON content preview: {str(self.credentials_json)[:100]}...")
                     raise
-            elif self.credentials_path and os.path.exists(self.credentials_path):
-                # Use service account file if it exists
-                logger.info("Using service account file")
-                self.client = storage.Client.from_service_account_json(self.credentials_path)
-            elif self.credentials_path and not os.path.exists(self.credentials_path):
-                # File path specified but doesn't exist
-                logger.error(f"Credentials file not found: {self.credentials_path}")
-                logger.error("Please ensure the file exists or use one of the other credential methods")
-                raise FileNotFoundError(f"Credentials file not found: {self.credentials_path}")
+                except Exception as e:
+                    logger.error(f"Error creating GCS client from service account info: {e}")
+                    raise
+            elif self.credentials_path and self.credentials_path != "GCLOUD_PK_JSON":
+                if os.path.exists(self.credentials_path):
+                    # Use service account file if it exists
+                    logger.info(f"Using service account file: {self.credentials_path}")
+                    self.client = storage.Client.from_service_account_json(self.credentials_path)
+                    logger.info("Successfully initialized GCS client with service account file")
+                else:
+                    # File path specified but doesn't exist
+                    logger.error(f"Credentials file not found: {self.credentials_path}")
+                    logger.error("Please ensure the file exists or use one of the other credential methods")
+                    raise FileNotFoundError(f"Credentials file not found: {self.credentials_path}")
             else:
                 # Use default credentials (ADC) - this works in cloud environments
-                logger.info("Using default application credentials")
+                logger.info("Using default application credentials (ADC)")
                 self.client = storage.Client()
+                logger.info("Successfully initialized GCS client with default credentials")
             
             # Get the bucket reference
             self.bucket = self.client.bucket(self.bucket_name)
@@ -117,9 +137,9 @@ class GoogleStorageCSVSink(BatchingSink):
                 # Don't fail completely - the bucket might be accessible for writing even if metadata read fails
                 logger.warning("Continuing without bucket validation - write operations will be tested during actual usage")
             
-        except GoogleAuthError as e:
-            logger.error(f"Google Cloud authentication failed: {e}")
-            logger.error("Please check your credentials. Available options:")
+        except (GoogleAuthError, GoogleAPICallError) as e:
+            logger.error(f"Google Cloud error: {e}")
+            logger.error("Please check your credentials and permissions. Available options:")
             logger.error("1. Set GCLOUD_PK_JSON environment variable with service account JSON content")
             logger.error("2. Set GOOGLE_APPLICATION_CREDENTIALS environment variable with path to service account file")
             logger.error("3. Use default application credentials (recommended for cloud environments)")
@@ -211,10 +231,11 @@ class GoogleStorageCSVSink(BatchingSink):
         while attempts_remaining > 0:
             try:
                 return self._write_to_gcs(data, batch)
-            except GoogleAuthError as e:
-                logger.error(f"Google Cloud authentication error: {e}")
+            except (GoogleAuthError, GoogleAPICallError) as e:
+                logger.error(f"Google Cloud error: {e}")
                 attempts_remaining -= 1
                 if attempts_remaining > 0:
+                    logger.info(f"Retrying in 5 seconds... ({attempts_remaining} attempts remaining)")
                     time.sleep(5)
             except Exception as e:
                 if "rate limit" in str(e).lower() or "quota" in str(e).lower():
@@ -321,14 +342,8 @@ def main():
         # Start the application
         logger.info("Application setup complete. Starting to process messages...")
         
-        # For initial testing - process limited messages
-        # Remove count and timeout for production use
-        try:
-            app.run(count=10, timeout=20)  # Test with 10 messages and 20 second timeout
-            logger.info("Test run completed successfully!")
-        except Exception as e:
-            logger.warning(f"Test run encountered an issue (this might be expected if no messages are available): {e}")
-            # For production, use: app.run()
+        # Run the application continuously
+        app.run()
             
     except KeyboardInterrupt:
         logger.info("Application interrupted by user")
