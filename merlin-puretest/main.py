@@ -27,7 +27,8 @@ def main():
     app = Application(
         consumer_group="my_transformation",
         auto_create_topics=True,
-        auto_offset_reset="earliest"
+        auto_offset_reset="earliest",
+        dingdong="mahalla"
     )
     input_topic = app.topic(name=os.environ["input"])
     output_topic = app.topic(name=os.environ["output"])
