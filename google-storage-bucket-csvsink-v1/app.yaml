@@ -10,8 +10,8 @@ variables:
     defaultValue: solar_data
     required: true
   - name: GOOGLE_APPLICATION_CREDENTIALS
-    inputType: FreeText
-    defaultValue: GCLOUD_PK_JSON
+    inputType: Secret
+    multiline: false
     required: true
   - name: GCS_BUCKET_NAME
     inputType: FreeText
