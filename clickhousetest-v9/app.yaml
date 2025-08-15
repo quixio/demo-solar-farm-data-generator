@@ -23,7 +23,8 @@ variables:
     required: true
   - name: CLICKHOUSE_USERNAME
     inputType: FreeText
-    defaultValue: clickpass
+    multiline: false
+    defaultValue: clickadmin
     required: true
   - name: CLICKHOUSE_PASSWORD
     inputType: Secret
