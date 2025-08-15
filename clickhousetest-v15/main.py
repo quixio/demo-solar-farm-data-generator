@@ -29,20 +29,24 @@ class ClickHouseSink(BatchingSink):
     """
     
     def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
-        super().__init__(
-            on_client_connect_success=on_client_connect_success,
-            on_client_connect_failure=on_client_connect_failure
-        )
+        super().__init__()
         self._client = None
         self._table_name = os.environ.get('CLICKHOUSE_TABLE', 'solar_panel_data')
         self._database = os.environ.get('CLICKHOUSE_DATABASE', 'default')
+        self._on_client_connect_success = on_client_connect_success
+        self._on_client_connect_failure = on_client_connect_failure
         
     def setup(self):
         """Initialize ClickHouse client and create table if necessary"""
         try:
             # Get connection parameters from environment variables
             host = os.environ.get('CLICKHOUSE_HOST', 'localhost')
-            port = int(os.environ.get('CLICKHOUSE_PORT', '9000'))
+            try:
+                port = int(os.environ.get('CLICKHOUSE_PORT', '9000'))
+            except ValueError:
+                logger.warning("Invalid CLICKHOUSE_PORT, using default 9000")
+                port = 9000
+                
             user = os.environ.get('CLICKHOUSE_USER', 'default')
             password = os.environ.get('CLICKHOUSE_PASSWORD', '')
             
@@ -65,13 +69,13 @@ class ClickHouseSink(BatchingSink):
             # Create table if it doesn't exist
             self._create_table()
             
-            if self.on_client_connect_success:
-                self.on_client_connect_success()
+            if self._on_client_connect_success:
+                self._on_client_connect_success()
                 
         except Exception as e:
             logger.error(f"Failed to connect to ClickHouse: {e}")
-            if self.on_client_connect_failure:
-                self.on_client_connect_failure(e)
+            if self._on_client_connect_failure:
+                self._on_client_connect_failure(e)
             raise
     
     def _create_table(self):
@@ -210,7 +214,10 @@ class ClickHouseSink(BatchingSink):
         Write batch of messages to ClickHouse with retry logic and backpressure handling.
         """
         if not self._client:
-            raise Exception("ClickHouse client not initialized. Call setup() first.")
+            logger.error("ClickHouse client not initialized. Calling setup()...")
+            self.setup()
+            if not self._client:
+                raise Exception("ClickHouse client not initialized. Setup failed.")
         
         attempts_remaining = 3
         backoff_delay = 1
@@ -276,6 +283,17 @@ class ClickHouseSink(BatchingSink):
         
         raise Exception("Failed to write to ClickHouse after all retry attempts")
 
+    def cleanup(self):
+        """Clean up resources"""
+        if self._client:
+            try:
+                self._client.disconnect()
+                logger.info("ClickHouse connection closed")
+            except Exception as e:
+                logger.warning(f"Error closing ClickHouse connection: {e}")
+            finally:
+                self._client = None
+
 
 def debug_message_structure(row):
     """Debug function to print raw message structure"""
@@ -296,6 +314,16 @@ def debug_message_structure(row):
 
 def main():
     """ Here we will set up our Application. """
+    
+    logger.info("Starting ClickHouse solar panel data sink application...")
+    
+    # Log environment variables for debugging (excluding passwords)
+    logger.info(f"CLICKHOUSE_HOST: {os.environ.get('CLICKHOUSE_HOST', 'localhost')}")
+    logger.info(f"CLICKHOUSE_PORT: {os.environ.get('CLICKHOUSE_PORT', '9000')}")
+    logger.info(f"CLICKHOUSE_USER: {os.environ.get('CLICKHOUSE_USER', 'default')}")
+    logger.info(f"CLICKHOUSE_DATABASE: {os.environ.get('CLICKHOUSE_DATABASE', 'default')}")
+    logger.info(f"CLICKHOUSE_TABLE: {os.environ.get('CLICKHOUSE_TABLE', 'solar_panel_data')}")
+    logger.info(f"Input topic: {os.environ.get('input', 'solar-data')}")
 
     # Setup necessary objects
     app = Application(
@@ -338,16 +366,22 @@ def main():
     sdf.sink(clickhouse_sink)
 
     # For initial testing, run with limits
-    logger.info("Starting ClickHouse solar panel data sink application...")
     try:
         # For testing: limit to 10 messages with 20 second timeout
         # Remove or modify these parameters for production use
+        logger.info("Running application with limits: count=10, timeout=20 seconds")
         app.run(count=10, timeout=20)
     except KeyboardInterrupt:
         logger.info("Application stopped by user")
     except Exception as e:
         logger.error(f"Application error: {e}")
         raise
+    finally:
+        # Clean up ClickHouse connection
+        try:
+            clickhouse_sink.cleanup()
+        except Exception as e:
+            logger.warning(f"Error during cleanup: {e}")
 
 
 # It is recommended to execute Applications under a conditional main
