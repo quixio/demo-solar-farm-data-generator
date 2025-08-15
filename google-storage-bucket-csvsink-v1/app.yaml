@@ -12,6 +12,7 @@ variables:
   - name: GOOGLE_APPLICATION_CREDENTIALS
     inputType: Secret
     multiline: false
+    defaultValue: GCLOUD_PK_JSON
     required: true
   - name: GCS_BUCKET_NAME
     inputType: FreeText
