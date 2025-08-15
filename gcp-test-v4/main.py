@@ -13,6 +13,7 @@ import logging
 from datetime import datetime
 from google.cloud import storage
 from google.auth.exceptions import GoogleAuthError
+from google.oauth2 import service_account
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
@@ -40,7 +41,7 @@ class SolarDataGCSCSVSink(BatchingSink):
             raise ValueError("GCS_BUCKET_NAME environment variable is required")
         
         self.csv_file_path = os.environ.get("GCS_CSV_FILE_PATH", "solar_data/solar_sensor_data.csv")
-        self.service_account_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        self.service_account_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
         
         self.client = None
         self.bucket = None
@@ -75,13 +76,18 @@ class SolarDataGCSCSVSink(BatchingSink):
     def setup(self):
         """Initialize GCS client and validate bucket access."""
         try:
-            if self.service_account_path:
-                self.client = storage.Client.from_service_account_json(self.service_account_path)
-                logger.info(f"Using service account from: {self.service_account_path}")
+            if self.service_account_json:
+                logger.info("Service account credentials found in environment variable")
+                # Parse the JSON content and create credentials
+                service_account_info = json.loads(self.service_account_json)
+                credentials = service_account.Credentials.from_service_account_info(service_account_info)
+                self.client = storage.Client(credentials=credentials)
+                logger.info("Successfully initialized GCS client with service account credentials")
             else:
+                logger.info("No service account credentials provided, attempting to use Application Default Credentials")
                 # Use default credentials (ADC)
                 self.client = storage.Client()
-                logger.info("Using Application Default Credentials")
+                logger.info("Successfully initialized GCS client with Application Default Credentials")
             
             self.bucket = self.client.bucket(self.bucket_name)
             
@@ -91,6 +97,9 @@ class SolarDataGCSCSVSink(BatchingSink):
             
             logger.info(f"Successfully connected to GCS bucket: {self.bucket_name}")
             
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse service account JSON: {e}")
+            raise
         except GoogleAuthError as e:
             logger.error(f"Authentication failed: {e}")
             raise
@@ -303,11 +312,9 @@ def main():
     # Sink the data to GCS CSV
     sdf.sink(solar_sink)
 
-    # For testing, run with limited count and timeout
-    # In production, remove count and timeout parameters
     try:
         logger.info("Starting solar data GCS CSV sink application...")
-        app.run(count=10, timeout=20)  # Process 10 messages or run for 20 seconds
+        app.run()
     except KeyboardInterrupt:
         logger.info("Application stopped by user")
     except Exception as e:
