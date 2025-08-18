@@ -1,26 +1,26 @@
 name: questdb-horror
 language: python
 variables:
-  - name: input
-    inputType: InputTopic
-    description: Name of the input topic to listen to.
-    defaultValue: solar-data
-  - name: QUESTDB_HOST
-    inputType: FreeText
-    defaultValue: questdb
-    required: true
-  - name: QUESTDB_PORT
-    inputType: FreeText
-    defaultValue: 9000
-    required: true
-  - name: QUESTDB_USERNAME
-    inputType: FreeText
-    defaultValue: tsadmin
-    required: true
-  - name: QUESTDB_PASSWORD
-    inputType: Secret
-    defaultValue: QUESTDB_PW
-    required: true
+- name: input
+  inputType: InputTopic
+  description: Name of the input topic to listen to.
+  defaultValue: solar-data
+- name: QUESTDB_HOST
+  inputType: FreeText
+  description: QuestDB server hostname or IP address
+  defaultValue: questdb
+- name: QUESTDB_PORT
+  inputType: FreeText
+  description: QuestDB HTTP port
+  defaultValue: '9000'
+- name: QUESTDB_USERNAME
+  inputType: FreeText
+  description: QuestDB username
+  defaultValue: tsadmin
+- name: QUESTDB_PASSWORD
+  inputType: Secret
+  description: QuestDB password
+  defaultValue: QUESTDB_PW
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
