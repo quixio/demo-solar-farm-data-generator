@@ -43,13 +43,28 @@ class ClickHouseSink(BatchingSink):
                 logger.warning("Invalid CLICKHOUSE_PORT value, using default 8123")
                 port = 8123
             
-            self.client = clickhouse_connect.get_client(
-                host=os.environ.get('CLICKHOUSE_HOST', 'localhost'),
-                port=port,
-                username=os.environ.get('CLICKHOUSE_USER', 'default'),
-                password=os.environ.get('CLICKHOUSE_PASSWORD', ''),
-                database=os.environ.get('CLICKHOUSE_DATABASE', 'default')
-            )
+            # Get connection parameters with defaults
+            host = os.environ.get('CLICKHOUSE_HOST', 'localhost')
+            username = os.environ.get('CLICKHOUSE_USER', 'default')
+            password = os.environ.get('CLICKHOUSE_PASSWORD', '')
+            database = os.environ.get('CLICKHOUSE_DATABASE', 'default')
+            
+            logger.info(f"Connecting to ClickHouse at {host}:{port}, database: {database}, user: {username}")
+            
+            try:
+                self.client = clickhouse_connect.get_client(
+                    host=host,
+                    port=port,
+                    username=username,
+                    password=password,
+                    database=database
+                )
+                # Test the connection
+                self.client.ping()
+                logger.info("ClickHouse connection established successfully")
+            except Exception as conn_error:
+                logger.error(f"Failed to connect to ClickHouse: {conn_error}")
+                raise
         return self.client
     
     def _setup_database(self):
@@ -279,13 +294,17 @@ class ClickHouseSink(BatchingSink):
         Write a batch of solar panel data to ClickHouse.
         Implements retry logic with exponential backoff.
         """
-        logger.info(f"Processing batch of {len(batch)} messages")
         attempts_remaining = 3
         backoff_delay = 1
         
+        # Convert batch to list once to avoid re-iteration issues
+        batch_items = list(batch)
+        batch_count = len(batch_items)
+        logger.info(f"Processing batch of {batch_count} messages")
+        
         # Parse all messages in the batch
         parsed_data = []
-        for item in batch:
+        for item in batch_items:
             parsed_item = self._parse_message(item)
             parsed_data.append(parsed_item)
         
@@ -307,10 +326,18 @@ class ClickHouseSink(BatchingSink):
                     raise
             except TimeoutError:
                 # Server is busy, signal for backpressure
+                # Get topic and partition from the first item in the batch if available
+                topic_name = None
+                partition_num = None
+                if batch_items:
+                    first_item = batch_items[0]
+                    topic_name = getattr(first_item, 'topic', None)
+                    partition_num = getattr(first_item, 'partition', None)
+                    
                 raise SinkBackpressureError(
                     retry_after=30.0,
-                    topic=batch.topic,
-                    partition=batch.partition,
+                    topic=topic_name,
+                    partition=partition_num,
                 )
         
         raise Exception("Failed to write batch to ClickHouse after all retries")
@@ -330,11 +357,18 @@ def main():
     logger.info(f"ClickHouse host: {os.environ.get('CLICKHOUSE_HOST', 'localhost')}")
 
     # Setup necessary objects
-    app = Application(
-        consumer_group="solar_data_clickhouse_sink",
-        auto_create_topics=True,
-        auto_offset_reset="earliest"
-    )
+    # Configure for Quix platform deployment
+    app_config = {
+        "consumer_group": "solar_data_clickhouse_sink",
+        "auto_create_topics": True,
+        "auto_offset_reset": "earliest"
+    }
+    
+    # Set state directory for Quix platform if running in cloud environment
+    if os.environ.get("QUIX_PORTAL_API") or "/app" in os.getcwd():
+        app_config["state_dir"] = "/app/state"
+    
+    app = Application(**app_config)
     
     clickhouse_sink = ClickHouseSink()
     input_topic = app.topic(name=os.environ["input"])
