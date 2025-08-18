@@ -6,82 +6,299 @@ from quixstreams.sinks import BatchingSink, SinkBatch, SinkBackpressureError
 
 import os
 import time
+import json
+import logging
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from datetime import datetime
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
 # load_dotenv()
 
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-class MyDatabaseSink(BatchingSink):
+
+class TimescaleSink(BatchingSink):
     """
-    Sinks are a way of writing data from a Kafka topic to a non-Kafka destination,
-    often some sort of database or file.
-
-    This is a custom placeholder Sink which showcases a simple pattern around
-    creating your own for a database.
-
-    There are numerous pre-built sinks available to use out of the box; see:
-    https://quix.io/docs/quix-streams/connectors/sinks/index.html
+    A custom sink for writing solar panel sensor data to TimescaleDB.
+    
+    This sink processes solar panel data from Kafka topics and writes it to 
+    a TimescaleDB hypertable for time-series data storage and analysis.
     """
+
+    def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
+        super().__init__(
+            on_client_connect_success=on_client_connect_success,
+            on_client_connect_failure=on_client_connect_failure
+        )
+        self._connection = None
+        self._connection_params = self._get_connection_params()
+
+    def _get_connection_params(self):
+        """Get database connection parameters from environment variables"""
+        try:
+            port = int(os.environ.get('DB_PORT', '5432'))
+        except ValueError:
+            port = 5432
+            
+        return {
+            'host': os.environ.get('DB_HOST', 'localhost'),
+            'port': port,
+            'database': os.environ.get('DB_NAME', 'solar_data'),
+            'user': os.environ.get('DB_USER', 'postgres'),
+            'password': os.environ.get('DB_PASSWORD', '')
+        }
+
+    def setup(self):
+        """Initialize the database connection and create tables if needed"""
+        try:
+            self._connection = psycopg2.connect(**self._connection_params)
+            self._connection.autocommit = False
+            
+            logger.info("Successfully connected to TimescaleDB")
+            
+            # Create the table and hypertable if they don't exist
+            self._create_table()
+            
+            if hasattr(self, '_on_client_connect_success') and self._on_client_connect_success:
+                self._on_client_connect_success()
+                
+        except Exception as e:
+            logger.error(f"Failed to connect to TimescaleDB: {e}")
+            if hasattr(self, '_on_client_connect_failure') and self._on_client_connect_failure:
+                self._on_client_connect_failure(e)
+            raise
+
+    def _create_table(self):
+        """Create the solar_data table and hypertable if they don't exist"""
+        create_table_sql = """
+        CREATE TABLE IF NOT EXISTS solar_data (
+            timestamp TIMESTAMPTZ NOT NULL,
+            panel_id TEXT NOT NULL,
+            location_id TEXT,
+            location_name TEXT,
+            latitude DOUBLE PRECISION,
+            longitude DOUBLE PRECISION,
+            timezone INTEGER,
+            power_output DOUBLE PRECISION,
+            unit_power TEXT,
+            temperature DOUBLE PRECISION,
+            unit_temp TEXT,
+            irradiance DOUBLE PRECISION,
+            unit_irradiance TEXT,
+            voltage DOUBLE PRECISION,
+            unit_voltage TEXT,
+            current DOUBLE PRECISION,
+            unit_current TEXT,
+            inverter_status TEXT,
+            original_timestamp BIGINT,
+            message_datetime TIMESTAMPTZ
+        );
+        """
+        
+        # Check if hypertable exists
+        check_hypertable_sql = """
+        SELECT EXISTS (
+            SELECT 1 FROM timescaledb_information.hypertables 
+            WHERE hypertable_name = 'solar_data'
+        );
+        """
+        
+        create_hypertable_sql = """
+        SELECT create_hypertable('solar_data', 'timestamp', if_not_exists => TRUE);
+        """
+        
+        try:
+            with self._connection.cursor() as cursor:
+                # Create table
+                cursor.execute(create_table_sql)
+                
+                # Check if hypertable exists, create if not
+                cursor.execute(check_hypertable_sql)
+                hypertable_exists = cursor.fetchone()[0]
+                
+                if not hypertable_exists:
+                    cursor.execute(create_hypertable_sql)
+                    logger.info("Created TimescaleDB hypertable for solar_data")
+                
+                self._connection.commit()
+                logger.info("Database table setup completed")
+                
+        except Exception as e:
+            self._connection.rollback()
+            logger.error(f"Failed to create table: {e}")
+            raise
+
+    def _parse_solar_data(self, message):
+        """Parse the solar data from the Kafka message"""
+        try:
+            # The message structure has the actual data in the 'value' field as a JSON string
+            if isinstance(message, dict) and 'value' in message:
+                # Parse the JSON string in the value field
+                solar_data = json.loads(message['value']) if isinstance(message['value'], str) else message['value']
+                
+                # Convert the original timestamp (looks like nanoseconds) to a proper datetime
+                # The timestamp appears to be in nanoseconds, convert to seconds
+                original_timestamp = solar_data.get('timestamp', 0)
+                
+                # Convert message datetime from ISO format
+                message_datetime = None
+                if 'dateTime' in message:
+                    message_datetime = datetime.fromisoformat(message['dateTime'].replace('Z', '+00:00'))
+                
+                # Use message datetime as the primary timestamp, fallback to current time
+                timestamp = message_datetime or datetime.utcnow()
+                
+                return {
+                    'timestamp': timestamp,
+                    'panel_id': solar_data.get('panel_id'),
+                    'location_id': solar_data.get('location_id'),
+                    'location_name': solar_data.get('location_name'),
+                    'latitude': solar_data.get('latitude'),
+                    'longitude': solar_data.get('longitude'),
+                    'timezone': solar_data.get('timezone'),
+                    'power_output': solar_data.get('power_output'),
+                    'unit_power': solar_data.get('unit_power'),
+                    'temperature': solar_data.get('temperature'),
+                    'unit_temp': solar_data.get('unit_temp'),
+                    'irradiance': solar_data.get('irradiance'),
+                    'unit_irradiance': solar_data.get('unit_irradiance'),
+                    'voltage': solar_data.get('voltage'),
+                    'unit_voltage': solar_data.get('unit_voltage'),
+                    'current': solar_data.get('current'),
+                    'unit_current': solar_data.get('unit_current'),
+                    'inverter_status': solar_data.get('inverter_status'),
+                    'original_timestamp': original_timestamp,
+                    'message_datetime': message_datetime
+                }
+            else:
+                logger.warning(f"Unexpected message format: {message}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to parse solar data: {e}")
+            logger.error(f"Raw message: {message}")
+            return None
+
     def _write_to_db(self, data):
-        """Placeholder for transformations and database write operation"""
-        ...
+        """Write batch of parsed solar data to TimescaleDB"""
+        if not data:
+            return
+            
+        insert_sql = """
+        INSERT INTO solar_data (
+            timestamp, panel_id, location_id, location_name, latitude, longitude,
+            timezone, power_output, unit_power, temperature, unit_temp, irradiance,
+            unit_irradiance, voltage, unit_voltage, current, unit_current,
+            inverter_status, original_timestamp, message_datetime
+        ) VALUES (
+            %(timestamp)s, %(panel_id)s, %(location_id)s, %(location_name)s,
+            %(latitude)s, %(longitude)s, %(timezone)s, %(power_output)s,
+            %(unit_power)s, %(temperature)s, %(unit_temp)s, %(irradiance)s,
+            %(unit_irradiance)s, %(voltage)s, %(unit_voltage)s, %(current)s,
+            %(unit_current)s, %(inverter_status)s, %(original_timestamp)s,
+            %(message_datetime)s
+        )
+        """
+        
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.executemany(insert_sql, data)
+                self._connection.commit()
+                logger.info(f"Successfully inserted {len(data)} solar data records")
+                
+        except Exception as e:
+            self._connection.rollback()
+            logger.error(f"Failed to insert data: {e}")
+            raise
 
     def write(self, batch: SinkBatch):
         """
-        Every Sink requires a .write method.
-
-        Here is where we attempt to write batches of data (multiple consumed messages,
-        for the sake of efficiency/speed) to our database.
-
-        Sinks have sanctioned patterns around retrying and handling connections.
-
-        See https://quix.io/docs/quix-streams/connectors/sinks/custom-sinks.html for
-        more details.
+        Write a batch of messages to TimescaleDB.
+        
+        This method processes incoming Kafka messages, parses the solar data,
+        and writes it to the TimescaleDB hypertable with retry logic and
+        proper error handling.
         """
         attempts_remaining = 3
-        data = [item.value for item in batch]
+        
+        # Parse the solar data from each message
+        parsed_data = []
+        for item in batch:
+            print(f"Raw message: {item.value}")  # Debug print for message structure
+            
+            parsed = self._parse_solar_data(item.value)
+            if parsed:
+                parsed_data.append(parsed)
+            else:
+                logger.warning(f"Skipping invalid message: {item.value}")
+        
+        if not parsed_data:
+            logger.warning("No valid data to write in this batch")
+            return
+            
         while attempts_remaining:
             try:
-                return self._write_to_db(data)
-            except ConnectionError:
-                # Maybe we just failed to connect, do a short wait and try again
-                # We can't repeat forever; the consumer will eventually time out
+                return self._write_to_db(parsed_data)
+            except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+                # Connection issues - try to reconnect
+                logger.warning(f"Connection error: {e}")
                 attempts_remaining -= 1
                 if attempts_remaining:
-                    time.sleep(3)
-            except TimeoutError:
-                # Maybe the server is busy, do a sanctioned extended pause
-                # Always safe to do, but will require re-consuming the data.
+                    try:
+                        if self._connection:
+                            self._connection.close()
+                        self._connection = psycopg2.connect(**self._connection_params)
+                        self._connection.autocommit = False
+                        time.sleep(3)
+                    except Exception as conn_e:
+                        logger.error(f"Reconnection failed: {conn_e}")
+                        if not attempts_remaining:
+                            raise
+            except psycopg2.errors.AdminShutdown:
+                # Database is being shut down - use backpressure
+                logger.warning("Database is shutting down, applying backpressure")
                 raise SinkBackpressureError(
-                    retry_after=30.0,
+                    retry_after=60.0,
                     topic=batch.topic,
                     partition=batch.partition,
                 )
-        raise Exception("Error while writing to database")
+            except Exception as e:
+                logger.error(f"Unexpected error writing to database: {e}")
+                raise
+                
+        raise Exception("Failed to write to TimescaleDB after 3 attempts")
 
 
 def main():
-    """ Here we will set up our Application. """
+    """Set up the Quix Streams Application for solar data processing."""
 
     # Setup necessary objects
     app = Application(
-        consumer_group="my_db_destination",
+        consumer_group="timescale_solar_sink",
         auto_create_topics=True,
         auto_offset_reset="earliest"
     )
-    my_db_sink = MyDatabaseSink()
+    
+    # Create TimescaleDB sink
+    timescale_sink = TimescaleSink()
+    
+    # Get input topic from environment variable
     input_topic = app.topic(name=os.environ["input"])
     sdf = app.dataframe(topic=input_topic)
 
-    # Do SDF operations/transformations
+    # Apply minimal transformations - just pass through and add debug printing
     sdf = sdf.apply(lambda row: row).print(metadata=True)
 
-    # Finish by calling StreamingDataFrame.sink()
-    sdf.sink(my_db_sink)
+    # Sink the data to TimescaleDB
+    sdf.sink(timescale_sink)
 
-    # With our pipeline defined, now run the Application
-    app.run()
+    # Run the application for testing with limited message count
+    logger.info("Starting TimescaleDB solar data sink application...")
+    app.run(count=10, timeout=20)
 
 
 # It is recommended to execute Applications under a conditional main
