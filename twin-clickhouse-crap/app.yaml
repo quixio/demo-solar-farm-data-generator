@@ -1,10 +1,34 @@
 name: twin-clickhouse-crap
 language: python
 variables:
-  - name: input
-    inputType: InputTopic
-    description: Name of the input topic to listen to.
-    defaultValue: transform
+- name: input
+  inputType: InputTopic
+  description: Name of the input topic to listen to.
+  defaultValue: solar-data
+- name: CLICKHOUSE_HOST
+  inputType: FreeText
+  description: ClickHouse server host
+  defaultValue: clickhouse-test
+- name: CLICKHOUSE_PORT
+  inputType: FreeText
+  description: ClickHouse server port
+  defaultValue: '9000'
+- name: CLICKHOUSE_DATABASE
+  inputType: FreeText
+  description: ClickHouse database name
+  defaultValue: default
+- name: CLICKHOUSE_USERNAME
+  inputType: FreeText
+  description: ClickHouse username
+  defaultValue: clickadmin
+- name: CLICKHOUSE_PASSWORD
+  inputType: Secret
+  description: ClickHouse password
+  defaultValue: CLICKHOUSE_SECRET_KEY
+- name: CLICKHOUSE_TABLE
+  inputType: FreeText
+  description: ClickHouse table name for solar data
+  defaultValue: solar_data
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
