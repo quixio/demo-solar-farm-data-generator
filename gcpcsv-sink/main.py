@@ -26,11 +26,8 @@ class GCPCSVSink(BatchingSink):
     from the 'value' field, and writes structured CSV files to GCP Cloud Storage.
     """
     
-    def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
-        super().__init__(
-            _on_client_connect_success=on_client_connect_success,
-            _on_client_connect_failure=on_client_connect_failure
-        )
+    def __init__(self):
+        super().__init__()
         self._gcs_client = None
         self._bucket = None
         self._bucket_name = os.environ.get("GCP_BUCKET_NAME")
@@ -68,14 +65,9 @@ class GCPCSVSink(BatchingSink):
                 raise ValueError(f"Bucket '{self._bucket_name}' does not exist or is not accessible")
             
             print(f"Successfully connected to GCS bucket: {self._bucket_name}")
-            
-            if self._on_client_connect_success:
-                self._on_client_connect_success()
                 
         except Exception as e:
             print(f"Failed to setup GCS connection: {e}")
-            if self._on_client_connect_failure:
-                self._on_client_connect_failure(e)
             raise
 
     def _parse_message(self, item):
@@ -215,6 +207,7 @@ def main():
     
     # Initialize our GCP CSV sink
     gcp_csv_sink = GCPCSVSink()
+    gcp_csv_sink.setup()
     
     # Get input topic from environment variable
     input_topic = app.topic(name=os.environ["input"])
@@ -227,8 +220,7 @@ def main():
     sdf.sink(gcp_csv_sink)
 
     # With our pipeline defined, now run the Application
-    # For testing, limit to 10 messages with timeout
-    app.run(count=10, timeout=20)
+    app.run()
 
 
 # It is recommended to execute Applications under a conditional main
