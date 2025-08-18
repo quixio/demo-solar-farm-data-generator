@@ -20,7 +20,6 @@ variables:
 - name: QUESTDB_PASSWORD
   inputType: Secret
   description: QuestDB password
-  defaultValue: QUESTDB_PW
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
