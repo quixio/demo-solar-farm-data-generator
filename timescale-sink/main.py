@@ -9,15 +9,14 @@ import time
 import json
 import logging
 import psycopg2
-from psycopg2.extras import RealDictCursor
-from datetime import datetime
+from datetime import datetime, timezone
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
 # load_dotenv()
 
 # Setup logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -29,11 +28,8 @@ class TimescaleSink(BatchingSink):
     a TimescaleDB hypertable for time-series data storage and analysis.
     """
 
-    def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
-        super().__init__(
-            on_client_connect_success=on_client_connect_success,
-            on_client_connect_failure=on_client_connect_failure
-        )
+    def __init__(self):
+        super().__init__()
         self._connection = None
         self._connection_params = self._get_connection_params()
 
@@ -43,34 +39,52 @@ class TimescaleSink(BatchingSink):
             port = int(os.environ.get('DB_PORT', '5432'))
         except ValueError:
             port = 5432
-            
-        return {
+        
+        params = {
             'host': os.environ.get('DB_HOST', 'localhost'),
             'port': port,
             'database': os.environ.get('DB_NAME', 'solar_data'),
             'user': os.environ.get('DB_USER', 'postgres'),
             'password': os.environ.get('DB_PASSWORD', '')
         }
+        
+        # Log connection parameters (without password)
+        logger.info(f"Database connection parameters:")
+        logger.info(f"  host: {params['host']}")
+        logger.info(f"  port: {params['port']}")
+        logger.info(f"  database: {params['database']}")
+        logger.info(f"  user: {params['user']}")
+        logger.info(f"  password: {'SET' if params['password'] else 'NOT_SET'}")
+            
+        return params
 
-    def setup(self):
-        """Initialize the database connection and create tables if needed"""
-        try:
-            self._connection = psycopg2.connect(**self._connection_params)
-            self._connection.autocommit = False
-            
-            logger.info("Successfully connected to TimescaleDB")
-            
-            # Create the table and hypertable if they don't exist
-            self._create_table()
-            
-            if hasattr(self, '_on_client_connect_success') and self._on_client_connect_success:
-                self._on_client_connect_success()
+    def add(self, value, key, timestamp, headers, topic, partition, offset):
+        """Override add method to establish connection on first call"""
+        # Lazy initialization of database connection
+        if self._connection is None:
+            try:
+                logger.info("Establishing database connection...")
+                self._connection = psycopg2.connect(**self._connection_params)
+                self._connection.autocommit = False
+                logger.info("Successfully connected to TimescaleDB")
                 
-        except Exception as e:
-            logger.error(f"Failed to connect to TimescaleDB: {e}")
-            if hasattr(self, '_on_client_connect_failure') and self._on_client_connect_failure:
-                self._on_client_connect_failure(e)
-            raise
+                # Create the table and hypertable if they don't exist
+                self._create_table()
+                
+            except Exception as e:
+                logger.error(f"Failed to connect to TimescaleDB: {e}")
+                raise
+        
+        # Call the parent add method with all required parameters
+        return super().add(value, key, timestamp, headers, topic, partition, offset)
+    
+    def _on_client_connect_success(self):
+        """Callback for successful database connection - no-op implementation"""
+        pass
+    
+    def _on_client_connect_failure(self, error):
+        """Callback for failed database connection - no-op implementation"""
+        pass
 
     def _create_table(self):
         """Create the solar_data table and hypertable if they don't exist"""
@@ -135,22 +149,60 @@ class TimescaleSink(BatchingSink):
     def _parse_solar_data(self, message):
         """Parse the solar data from the Kafka message"""
         try:
-            # The message structure has the actual data in the 'value' field as a JSON string
-            if isinstance(message, dict) and 'value' in message:
-                # Parse the JSON string in the value field
-                solar_data = json.loads(message['value']) if isinstance(message['value'], str) else message['value']
+            # The message should already be parsed by Quix Streams
+            # Based on the logs, we get: { 'panel_id': 'LONDON-P0011', ... }
+            
+            if isinstance(message, dict):
+                # Check if this is already direct solar panel data (most common case)
+                if 'panel_id' in message:
+                    solar_data = message
+                    message_datetime = None
+                    logger.debug("Processing direct solar panel data format")
+                elif 'value' in message:
+                    # Handle wrapped format with 'value' field containing JSON string or dict
+                    if isinstance(message['value'], str):
+                        try:
+                            solar_data = json.loads(message['value'])
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Failed to parse JSON from value field: {e}")
+                            logger.error(f"Value content: {message['value']}")
+                            return None
+                    elif isinstance(message['value'], dict):
+                        solar_data = message['value']
+                    else:
+                        logger.warning(f"Unexpected value type in message: {type(message['value'])}")
+                        return None
+                    
+                    # Convert message datetime from ISO format if present
+                    message_datetime = None
+                    if 'dateTime' in message:
+                        try:
+                            message_datetime = datetime.fromisoformat(message['dateTime'].replace('Z', '+00:00'))
+                        except ValueError as e:
+                            logger.warning(f"Failed to parse dateTime: {e}")
+                    logger.debug("Processing wrapped solar data format with 'value' field")
+                else:
+                    logger.warning(f"Unexpected message format - no 'panel_id' or 'value' field found: {list(message.keys())}")
+                    return None
                 
                 # Convert the original timestamp (looks like nanoseconds) to a proper datetime
                 # The timestamp appears to be in nanoseconds, convert to seconds
                 original_timestamp = solar_data.get('timestamp', 0)
                 
-                # Convert message datetime from ISO format
-                message_datetime = None
-                if 'dateTime' in message:
-                    message_datetime = datetime.fromisoformat(message['dateTime'].replace('Z', '+00:00'))
+                # Use message datetime as the primary timestamp, fallback to converting original timestamp or current time
+                if message_datetime:
+                    timestamp = message_datetime
+                elif original_timestamp and original_timestamp > 0:
+                    # Convert from nanoseconds to seconds and create datetime with UTC timezone
+                    timestamp_seconds = original_timestamp / 1_000_000_000
+                    timestamp = datetime.fromtimestamp(timestamp_seconds, tz=timezone.utc)
+                else:
+                    timestamp = datetime.now(timezone.utc)
                 
-                # Use message datetime as the primary timestamp, fallback to current time
-                timestamp = message_datetime or datetime.utcnow()
+                # Validate essential fields
+                if not solar_data.get('panel_id'):
+                    logger.warning("Missing panel_id in solar data - skipping record")
+                    return None
                 
                 return {
                     'timestamp': timestamp,
@@ -175,7 +227,7 @@ class TimescaleSink(BatchingSink):
                     'message_datetime': message_datetime
                 }
             else:
-                logger.warning(f"Unexpected message format: {message}")
+                logger.warning(f"Unexpected message format: {type(message)} - {str(message)[:100]}")
                 return None
                 
         except Exception as e:
@@ -209,6 +261,9 @@ class TimescaleSink(BatchingSink):
                 cursor.executemany(insert_sql, data)
                 self._connection.commit()
                 logger.info(f"Successfully inserted {len(data)} solar data records")
+                if data:
+                    sample_panel = data[0].get('panel_id', 'unknown')
+                    logger.info(f"Sample panel inserted: {sample_panel}")
                 
         except Exception as e:
             self._connection.rollback()
@@ -223,22 +278,48 @@ class TimescaleSink(BatchingSink):
         and writes it to the TimescaleDB hypertable with retry logic and
         proper error handling.
         """
+        logger.info(f"write() called with batch")
+        
+        # Ensure connection is established (should be done in add(), but double-check)
+        if self._connection is None:
+            logger.info("Connection not established yet, establishing now...")
+            self._connection = psycopg2.connect(**self._connection_params)
+            self._connection.autocommit = False
+            logger.info("Successfully connected to TimescaleDB in write()")
+            self._create_table()
+        
         attempts_remaining = 3
         
         # Parse the solar data from each message
         parsed_data = []
+        message_count = 0
+        
+        logger.info("Parsing messages from batch...")
+        
+        # Iterate over the batch items
         for item in batch:
-            print(f"Raw message: {item.value}")  # Debug print for message structure
-            
-            parsed = self._parse_solar_data(item.value)
-            if parsed:
-                parsed_data.append(parsed)
-            else:
-                logger.warning(f"Skipping invalid message: {item.value}")
+            message_count += 1
+            try:
+                logger.debug(f"Processing message {message_count}")
+                logger.debug(f"Message value type: {type(item.value)}")
+                logger.debug(f"Message value preview: {str(item.value)[:200]}...")
+                
+                parsed = self._parse_solar_data(item.value)
+                if parsed:
+                    parsed_data.append(parsed)
+                    logger.debug(f"Successfully parsed message {message_count}: panel_id={parsed.get('panel_id')}")
+                else:
+                    logger.warning(f"Skipping invalid message {message_count}: {str(item.value)[:100]}...")
+            except Exception as e:
+                logger.error(f"Error processing message {message_count}: {e}")
+                logger.error(f"Message content: {str(item.value)[:200]}...")
+                # Continue processing other messages
         
         if not parsed_data:
             logger.warning("No valid data to write in this batch")
             return
+        else:
+            logger.info(f"Successfully parsed {len(parsed_data)} messages from {message_count} total, writing to database...")
             
         while attempts_remaining:
             try:
@@ -261,32 +342,61 @@ class TimescaleSink(BatchingSink):
             except psycopg2.errors.AdminShutdown:
                 # Database is being shut down - use backpressure
                 logger.warning("Database is shutting down, applying backpressure")
-                raise SinkBackpressureError(
-                    retry_after=60.0,
-                    topic=batch.topic,
-                    partition=batch.partition,
-                )
+                # Get the first item from batch to extract topic/partition information
+                first_item = next(iter(batch), None)
+                if first_item:
+                    raise SinkBackpressureError(
+                        retry_after=60.0,
+                        topic=first_item.topic,
+                        partition=first_item.partition,
+                    )
+                else:
+                    # If no items in batch, just re-raise the original exception
+                    raise
             except Exception as e:
                 logger.error(f"Unexpected error writing to database: {e}")
                 raise
                 
         raise Exception("Failed to write to TimescaleDB after 3 attempts")
 
+    def close(self):
+        """Close the database connection"""
+        if self._connection:
+            try:
+                self._connection.close()
+                logger.info("TimescaleDB connection closed")
+            except Exception as e:
+                logger.error(f"Error closing database connection: {e}")
+            finally:
+                self._connection = None
+
 
 def main():
     """Set up the Quix Streams Application for solar data processing."""
+    
+    logger.info("Starting TimescaleDB solar data sink application...")
+    logger.info(f"Environment variables:")
+    logger.info(f"- input topic: {os.environ.get('input', 'NOT_SET')}")
+    logger.info(f"- DB_HOST: {os.environ.get('DB_HOST', 'NOT_SET')}")
+    logger.info(f"- DB_PORT: {os.environ.get('DB_PORT', 'NOT_SET')}")
+    logger.info(f"- DB_NAME: {os.environ.get('DB_NAME', 'NOT_SET')}")
+    logger.info(f"- DB_USER: {os.environ.get('DB_USER', 'NOT_SET')}")
+    logger.info(f"- DB_PASSWORD: {'SET' if os.environ.get('DB_PASSWORD') else 'NOT_SET'}")
 
     # Setup necessary objects
     app = Application(
         consumer_group="timescale_solar_sink",
         auto_create_topics=True,
-        auto_offset_reset="earliest"
+        auto_offset_reset="earliest",
+        state_dir="/app/state"  # Set state directory for cloud deployment
     )
     
     # Create TimescaleDB sink
+    logger.info("Creating TimescaleDB sink...")
     timescale_sink = TimescaleSink()
     
     # Get input topic from environment variable
+    logger.info(f"Setting up input topic: {os.environ['input']}")
     input_topic = app.topic(name=os.environ["input"])
     sdf = app.dataframe(topic=input_topic)
 
@@ -294,11 +404,28 @@ def main():
     sdf = sdf.apply(lambda row: row).print(metadata=True)
 
     # Sink the data to TimescaleDB
+    logger.info("Connecting sink to dataframe...")
     sdf.sink(timescale_sink)
 
-    # Run the application for testing with limited message count
-    logger.info("Starting TimescaleDB solar data sink application...")
-    app.run(count=10, timeout=20)
+    # Run the application
+    logger.info("Starting Quix Streams application...")
+    try:
+        # For testing, we can limit the count and add timeout
+        # For production, remove count parameter to run indefinitely
+        app.run(count=10, timeout=20)
+        logger.info("Application completed successfully")
+    except KeyboardInterrupt:
+        logger.info("Application stopped by user")
+    except Exception as e:
+        logger.error(f"Application error: {e}")
+        raise
+    finally:
+        # Ensure database connection is properly closed
+        logger.info("Cleaning up resources...")
+        try:
+            timescale_sink.close()
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
 
 
 # It is recommended to execute Applications under a conditional main
