@@ -120,28 +120,61 @@ class ClickHouseSolarSink(BatchingSink):
         """
         Parse solar data from the message structure.
         
-        Based on the schema analysis, the actual solar data is in the 'value' field
-        as a JSON string that needs to be parsed.
+        The message can be in various formats:
+        1. Direct solar panel data (dict with panel_id, location_id, etc.)
+        2. QuixStreams message with 'value' containing solar data directly
+        3. Kafka envelope with 'value' field containing JSON string
         """
         try:
             # Debug: Print the raw message structure
             logger.info(f"Raw message: {message}")
             
-            # The message should already be parsed as a dictionary by QuixStreams
-            # The actual solar data is in the 'value' field as a JSON string
-            if isinstance(message, dict) and 'value' in message:
-                # Parse the nested JSON in the value field
-                solar_data_str = message['value']
-                if isinstance(solar_data_str, str):
-                    solar_data = json.loads(solar_data_str)
-                else:
-                    solar_data = solar_data_str
+            solar_data = None
+            message_timestamp = datetime.now()
+            kafka_partition = 0
+            kafka_offset = 0
+            
+            # Check if this is already direct solar panel data
+            if isinstance(message, dict) and 'panel_id' in message:
+                # This is direct solar panel data
+                solar_data = message
                 
+            # Check if this is a QuixStreams message structure with 'value'
+            elif isinstance(message, dict) and 'value' in message:
+                value_data = message['value']
+                
+                # If value contains direct solar panel data
+                if isinstance(value_data, dict) and 'panel_id' in value_data:
+                    solar_data = value_data
+                    # Extract metadata if available
+                    if 'timestamp' in message and message['timestamp']:
+                        message_timestamp = datetime.fromtimestamp(message['timestamp'] / 1000)
+                    kafka_partition = message.get('partition', 0)
+                    kafka_offset = message.get('offset', 0)
+                    
+                # If value is a JSON string that needs parsing
+                elif isinstance(value_data, str):
+                    try:
+                        solar_data = json.loads(value_data)
+                        # Parse message timestamp if available
+                        if 'dateTime' in message:
+                            message_timestamp = datetime.fromisoformat(message['dateTime'].replace('Z', '+00:00'))
+                        kafka_partition = message.get('partition', 0)
+                        kafka_offset = message.get('offset', 0)
+                    except json.JSONDecodeError:
+                        logger.error(f"Failed to parse JSON from value field: {value_data}")
+                        return None
+                else:
+                    logger.error(f"Unexpected value data type: {type(value_data)}")
+                    return None
+            else:
+                logger.error(f"Unexpected message structure: {message}")
+                return None
+            
+            # If we successfully extracted solar data, process it
+            if solar_data and isinstance(solar_data, dict) and 'panel_id' in solar_data:
                 # Convert timestamp from nanoseconds to datetime
                 sensor_timestamp = datetime.fromtimestamp(solar_data['timestamp'] / 1e9)
-                
-                # Parse message timestamp
-                message_timestamp = datetime.fromisoformat(message['dateTime'].replace('Z', '+00:00'))
                 
                 # Prepare data for ClickHouse insertion
                 parsed_data = {
@@ -164,14 +197,13 @@ class ClickHouseSolarSink(BatchingSink):
                     'inverter_status': solar_data['inverter_status'],
                     'sensor_timestamp': sensor_timestamp,
                     'message_timestamp': message_timestamp,
-                    'kafka_partition': message.get('partition', 0),
-                    'kafka_offset': message.get('offset', 0)
+                    'kafka_partition': kafka_partition,
+                    'kafka_offset': kafka_offset
                 }
                 
                 return parsed_data
-                
             else:
-                logger.error(f"Unexpected message structure: {message}")
+                logger.error(f"No valid solar data found in message: {message}")
                 return None
                 
         except Exception as e:
@@ -191,7 +223,24 @@ class ClickHouseSolarSink(BatchingSink):
         # Parse all messages in the batch
         parsed_data = []
         for item in batch:
-            parsed_item = self._parse_solar_data(item.value)
+            # QuixStreams provides the message value in item.value
+            # Additional metadata is available in item.key, item.timestamp, etc.
+            message_data = item.value
+            
+            # Add metadata from the QuixStreams message item if available
+            if hasattr(item, 'key') or hasattr(item, 'timestamp'):
+                metadata_enhanced_message = {
+                    'value': message_data,
+                    'key': getattr(item, 'key', None),
+                    'timestamp': getattr(item, 'timestamp', None),
+                    'headers': getattr(item, 'headers', None),
+                    'partition': getattr(item, 'partition', 0),
+                    'offset': getattr(item, 'offset', 0)
+                }
+                parsed_item = self._parse_solar_data(metadata_enhanced_message)
+            else:
+                parsed_item = self._parse_solar_data(message_data)
+            
             if parsed_item:
                 parsed_data.append(parsed_item)
             else:
