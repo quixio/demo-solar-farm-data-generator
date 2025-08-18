@@ -1,31 +1,38 @@
 name: questdb-hell-inferno
 language: python
 variables:
-  - name: input
-    inputType: InputTopic
-    description: Name of the input topic to listen to.
-    defaultValue: solar-data
-  - name: QUESTDB_HOST
-    inputType: FreeText
-    description: QuestDB server hostname
-    defaultValue: questdb
-  - name: QUESTDB_PORT
-    inputType: FreeText
-    description: QuestDB server port
-    defaultValue: 8812
-  - name: QUESTDB_USERNAME
-    inputType: FreeText
-    description: QuestDB username (optional)
-  - name: QUESTDB_DATABASE
-    inputType: FreeText
-    description: QuestDB database name
-    defaultValue: qdb
-  - name: QUESTDB_TABLE
-    inputType: FreeText
-    description: Table name for solar panel data
-    defaultValue: solar_panel_data
-  - name: LOG_LEVEL
-    inputType: FreeText
+- name: input
+  inputType: InputTopic
+  description: Name of the input topic to listen to.
+  defaultValue: solar-data
+- name: QUESTDB_HOST
+  inputType: FreeText
+  description: QuestDB server hostname
+  defaultValue: questdb
+- name: QUESTDB_PORT
+  inputType: FreeText
+  description: QuestDB server port
+  defaultValue: '8812'
+- name: QUESTDB_USERNAME
+  inputType: FreeText
+  description: QuestDB username (optional)
+  defaultValue: ''
+- name: QUESTDB_PASSWORD
+  inputType: Secret
+  description: QuestDB password (optional)
+  defaultValue: ''
+- name: QUESTDB_DATABASE
+  inputType: FreeText
+  description: QuestDB database name
+  defaultValue: qdb
+- name: QUESTDB_TABLE
+  inputType: FreeText
+  description: Table name for solar panel data
+  defaultValue: solar_panel_data
+- name: LOG_LEVEL
+  inputType: FreeText
+  description: Logging level (DEBUG, INFO, WARNING, ERROR)
+  defaultValue: INFO
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
