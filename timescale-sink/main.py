@@ -149,23 +149,28 @@ class TimescaleSink(BatchingSink):
     def _parse_solar_data(self, message):
         """Parse the solar data from the Kafka message"""
         try:
-            # Handle two possible message formats:
-            # 1. Direct solar data (what we're actually receiving)
-            # 2. Wrapped format with 'value' field containing JSON string (from schema docs)
+            # The message should already be parsed by Quix Streams
+            # Based on the logs, we get: { 'panel_id': 'LONDON-P0011', ... }
             
             if isinstance(message, dict):
-                # Check if this is already direct solar panel data
+                # Check if this is already direct solar panel data (most common case)
                 if 'panel_id' in message:
                     solar_data = message
                     message_datetime = None
-                    logger.info("Processing direct solar panel data format")
+                    logger.debug("Processing direct solar panel data format")
                 elif 'value' in message:
-                    # Parse the JSON string in the value field
-                    try:
-                        solar_data = json.loads(message['value']) if isinstance(message['value'], str) else message['value']
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse JSON from value field: {e}")
-                        logger.error(f"Value content: {message['value']}")
+                    # Handle wrapped format with 'value' field containing JSON string or dict
+                    if isinstance(message['value'], str):
+                        try:
+                            solar_data = json.loads(message['value'])
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Failed to parse JSON from value field: {e}")
+                            logger.error(f"Value content: {message['value']}")
+                            return None
+                    elif isinstance(message['value'], dict):
+                        solar_data = message['value']
+                    else:
+                        logger.warning(f"Unexpected value type in message: {type(message['value'])}")
                         return None
                     
                     # Convert message datetime from ISO format if present
@@ -175,7 +180,7 @@ class TimescaleSink(BatchingSink):
                             message_datetime = datetime.fromisoformat(message['dateTime'].replace('Z', '+00:00'))
                         except ValueError as e:
                             logger.warning(f"Failed to parse dateTime: {e}")
-                    logger.info("Processing wrapped solar data format with 'value' field")
+                    logger.debug("Processing wrapped solar data format with 'value' field")
                 else:
                     logger.warning(f"Unexpected message format - no 'panel_id' or 'value' field found: {list(message.keys())}")
                     return None
@@ -222,7 +227,7 @@ class TimescaleSink(BatchingSink):
                     'message_datetime': message_datetime
                 }
             else:
-                logger.warning(f"Unexpected message format: {message}")
+                logger.warning(f"Unexpected message format: {type(message)} - {str(message)[:100]}")
                 return None
                 
         except Exception as e:
@@ -273,7 +278,7 @@ class TimescaleSink(BatchingSink):
         and writes it to the TimescaleDB hypertable with retry logic and
         proper error handling.
         """
-        logger.info(f"write() called with batch containing {len(batch)} messages")
+        logger.info(f"write() called with batch")
         
         # Ensure connection is established (should be done in add(), but double-check)
         if self._connection is None:
@@ -287,25 +292,34 @@ class TimescaleSink(BatchingSink):
         
         # Parse the solar data from each message
         parsed_data = []
-        logger.info(f"Parsing {len(batch)} messages from batch...")
+        message_count = 0
         
-        for i, item in enumerate(batch):
-            logger.info(f"Processing message {i+1}/{len(batch)}")
-            logger.info(f"Message value type: {type(item.value)}")
-            logger.info(f"Message value preview: {str(item.value)[:200]}...")
-            
-            parsed = self._parse_solar_data(item.value)
-            if parsed:
-                parsed_data.append(parsed)
-                logger.info(f"Successfully parsed message {i+1}: panel_id={parsed.get('panel_id')}")
-            else:
-                logger.warning(f"Skipping invalid message {i+1}: {str(item.value)[:100]}...")
+        logger.info("Parsing messages from batch...")
+        
+        # Iterate over the batch items
+        for item in batch:
+            message_count += 1
+            try:
+                logger.debug(f"Processing message {message_count}")
+                logger.debug(f"Message value type: {type(item.value)}")
+                logger.debug(f"Message value preview: {str(item.value)[:200]}...")
+                
+                parsed = self._parse_solar_data(item.value)
+                if parsed:
+                    parsed_data.append(parsed)
+                    logger.debug(f"Successfully parsed message {message_count}: panel_id={parsed.get('panel_id')}")
+                else:
+                    logger.warning(f"Skipping invalid message {message_count}: {str(item.value)[:100]}...")
+            except Exception as e:
+                logger.error(f"Error processing message {message_count}: {e}")
+                logger.error(f"Message content: {str(item.value)[:200]}...")
+                # Continue processing other messages
         
         if not parsed_data:
             logger.warning("No valid data to write in this batch")
             return
         else:
-            logger.info(f"Successfully parsed {len(parsed_data)} messages, writing to database...")
+            logger.info(f"Successfully parsed {len(parsed_data)} messages from {message_count} total, writing to database...")
             
         while attempts_remaining:
             try:
@@ -328,11 +342,17 @@ class TimescaleSink(BatchingSink):
             except psycopg2.errors.AdminShutdown:
                 # Database is being shut down - use backpressure
                 logger.warning("Database is shutting down, applying backpressure")
-                raise SinkBackpressureError(
-                    retry_after=60.0,
-                    topic=batch.topic,
-                    partition=batch.partition,
-                )
+                # Get the first item from batch to extract topic/partition information
+                first_item = next(iter(batch), None)
+                if first_item:
+                    raise SinkBackpressureError(
+                        retry_after=60.0,
+                        topic=first_item.topic,
+                        partition=first_item.partition,
+                    )
+                else:
+                    # If no items in batch, just re-raise the original exception
+                    raise
             except Exception as e:
                 logger.error(f"Unexpected error writing to database: {e}")
                 raise
