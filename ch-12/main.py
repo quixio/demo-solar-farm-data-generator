@@ -209,22 +209,27 @@ class ClickHouseSolarDataSink(BaseSink):
 
     def add(self, value, key=None, timestamp=None, headers=None):
         """Add a message to the sink (required by BaseSink)"""
-        self._ensure_setup()
-        
-        # Create a mock message item for parsing compatibility
-        class MockItem:
-            def __init__(self, value, offset=None):
-                self.value = value
-                self.offset = offset or 0
-        
-        item = MockItem(value)
-        record = self._parse_message(item)
-        
-        if not record:
-            logger.warning("No valid record to write")
-            return
+        try:
+            self._ensure_setup()
             
-        self._write_single_record(record)
+            # Create a mock message item for parsing compatibility
+            class MockItem:
+                def __init__(self, value, offset=None):
+                    self.value = value
+                    self.offset = offset or 0
+            
+            item = MockItem(value)
+            record = self._parse_message(item)
+            
+            if not record:
+                logger.warning("No valid record to write")
+                return
+                
+            self._write_single_record(record)
+        except Exception as e:
+            logger.error(f"Error in sink.add(): {e}")
+            # Re-raise to ensure the application handles the error properly
+            raise
     
     def _write_single_record(self, record):
         """Write single record to ClickHouse"""
@@ -263,6 +268,22 @@ class ClickHouseSolarDataSink(BaseSink):
                     time.sleep(3)
         
         raise Exception(f"Failed to write record to ClickHouse after 3 attempts")
+    
+    def flush(self, topic, partition):
+        """
+        Flush any buffered data to ClickHouse.
+        
+        This method is required by the BaseSink abstract class.
+        Since we write records immediately in the add() method,
+        there's no buffered data to flush, so this is a no-op.
+        
+        Args:
+            topic: The Kafka topic name
+            partition: The Kafka partition number
+        """
+        # No buffering implemented, so nothing to flush
+        logger.debug(f"Flush called for topic {topic}, partition {partition} - no buffered data to flush")
+        pass
 
 
 def main():
@@ -300,9 +321,9 @@ def main():
         # Sink the data to ClickHouse
         sdf.sink(clickhouse_sink)
 
-        # Run the application with limited message count for testing
+        # Run the application continuously
         logger.info("Starting solar data to ClickHouse sink application...")
-        app.run(count=10, timeout=20)
+        app.run()
         
     except KeyError as e:
         logger.error(f"Missing required environment variable: {e}")
