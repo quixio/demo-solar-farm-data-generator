@@ -58,7 +58,7 @@ class TimescaleSink(BatchingSink):
             
         return params
 
-    def add(self, value, key, timestamp, headers):
+    def add(self, value, key, timestamp, headers, topic, partition, offset):
         """Override add method to establish connection on first call"""
         # Lazy initialization of database connection
         if self._connection is None:
@@ -75,8 +75,8 @@ class TimescaleSink(BatchingSink):
                 logger.error(f"Failed to connect to TimescaleDB: {e}")
                 raise
         
-        # Call the parent add method
-        return super().add(value, key, timestamp, headers)
+        # Call the parent add method with all required parameters
+        return super().add(value, key, timestamp, headers, topic, partition, offset)
     
     def _on_client_connect_success(self):
         """Callback for successful database connection - no-op implementation"""
@@ -367,7 +367,8 @@ def main():
     app = Application(
         consumer_group="timescale_solar_sink",
         auto_create_topics=True,
-        auto_offset_reset="earliest"
+        auto_offset_reset="earliest",
+        state_dir="/app/state"  # Set state directory for cloud deployment
     )
     
     # Create TimescaleDB sink
@@ -398,6 +399,13 @@ def main():
     except Exception as e:
         logger.error(f"Application error: {e}")
         raise
+    finally:
+        # Ensure database connection is properly closed
+        logger.info("Cleaning up resources...")
+        try:
+            timescale_sink.close()
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
 
 
 # It is recommended to execute Applications under a conditional main
