@@ -72,7 +72,19 @@ class ClickHouseSink(BatchingSink):
         try:
             client = self._get_client()
             
-            # Create table DDL
+            # Check if table exists and get its structure
+            try:
+                result = client.query("SHOW CREATE TABLE solar_panel_data")
+                existing_schema = result.result_rows[0][0] if result.result_rows else None
+                if existing_schema and 'kafka_topic' in existing_schema:
+                    logger.info("Found existing table with kafka columns, dropping to recreate with new schema")
+                    client.command("DROP TABLE IF EXISTS solar_panel_data")
+                else:
+                    logger.info("Table doesn't exist or has correct schema")
+            except Exception as check_error:
+                logger.info(f"Table doesn't exist or error checking schema: {check_error}")
+            
+            # Create table DDL with correct schema
             create_table_sql = """
             CREATE TABLE IF NOT EXISTS solar_panel_data (
                 panel_id String,
@@ -93,10 +105,7 @@ class ClickHouseSink(BatchingSink):
                 unit_current String,
                 inverter_status String,
                 sensor_timestamp DateTime64(3),
-                message_timestamp DateTime64(3),
-                kafka_topic String,
-                kafka_partition Int32,
-                kafka_offset Int64
+                message_timestamp DateTime64(3)
             ) ENGINE = MergeTree()
             ORDER BY (panel_id, sensor_timestamp)
             """
@@ -175,30 +184,32 @@ class ClickHouseSink(BatchingSink):
                 message_timestamp = datetime.now()
             
             # Map the data to our table schema with safe access and type conversion
-            parsed_data = {
-                'panel_id': str(solar_data.get('panel_id', '')),
-                'location_id': str(solar_data.get('location_id', '')),
-                'location_name': str(solar_data.get('location_name', '')),
-                'latitude': float(solar_data.get('latitude', 0.0)),
-                'longitude': float(solar_data.get('longitude', 0.0)),
-                'timezone': int(solar_data.get('timezone', 0)),
-                'power_output': float(solar_data.get('power_output', 0.0)),
-                'unit_power': str(solar_data.get('unit_power', '')),
-                'temperature': float(solar_data.get('temperature', 0.0)),
-                'unit_temp': str(solar_data.get('unit_temp', '')),
-                'irradiance': float(solar_data.get('irradiance', 0.0)),
-                'unit_irradiance': str(solar_data.get('unit_irradiance', '')),
-                'voltage': float(solar_data.get('voltage', 0.0)),
-                'unit_voltage': str(solar_data.get('unit_voltage', '')),
-                'current': float(solar_data.get('current', 0.0)),
-                'unit_current': str(solar_data.get('unit_current', '')),
-                'inverter_status': str(solar_data.get('inverter_status', '')),
-                'sensor_timestamp': sensor_timestamp,
-                'message_timestamp': message_timestamp,
-                'kafka_topic': str(item.topic if hasattr(item, 'topic') else ''),
-                'kafka_partition': int(item.partition if hasattr(item, 'partition') else 0),
-                'kafka_offset': int(item.offset if hasattr(item, 'offset') else 0)
-            }
+            try:
+                parsed_data = {
+                    'panel_id': str(solar_data.get('panel_id', '')),
+                    'location_id': str(solar_data.get('location_id', '')),
+                    'location_name': str(solar_data.get('location_name', '')),
+                    'latitude': float(solar_data.get('latitude', 0.0)),
+                    'longitude': float(solar_data.get('longitude', 0.0)),
+                    'timezone': int(solar_data.get('timezone', 0)),
+                    'power_output': float(solar_data.get('power_output', 0.0)),
+                    'unit_power': str(solar_data.get('unit_power', '')),
+                    'temperature': float(solar_data.get('temperature', 0.0)),
+                    'unit_temp': str(solar_data.get('unit_temp', '')),
+                    'irradiance': float(solar_data.get('irradiance', 0.0)),
+                    'unit_irradiance': str(solar_data.get('unit_irradiance', '')),
+                    'voltage': float(solar_data.get('voltage', 0.0)),
+                    'unit_voltage': str(solar_data.get('unit_voltage', '')),
+                    'current': float(solar_data.get('current', 0.0)),
+                    'unit_current': str(solar_data.get('unit_current', '')),
+                    'inverter_status': str(solar_data.get('inverter_status', '')),
+                    'sensor_timestamp': sensor_timestamp,
+                    'message_timestamp': message_timestamp
+                }
+            except (ValueError, TypeError) as conversion_error:
+                logger.error(f"Error converting data types: {conversion_error}")
+                logger.error(f"Solar data: {solar_data}")
+                return None
             
             logger.debug(f"Successfully parsed data for panel: {parsed_data['panel_id']}")
             return parsed_data
@@ -221,8 +232,7 @@ class ClickHouseSink(BatchingSink):
             'panel_id', 'location_id', 'location_name', 'latitude', 'longitude',
             'timezone', 'power_output', 'unit_power', 'temperature', 'unit_temp',
             'irradiance', 'unit_irradiance', 'voltage', 'unit_voltage', 'current',
-            'unit_current', 'inverter_status', 'sensor_timestamp', 'message_timestamp',
-            'kafka_topic', 'kafka_partition', 'kafka_offset'
+            'unit_current', 'inverter_status', 'sensor_timestamp', 'message_timestamp'
         ]
         
         # Prepare data for insertion using dictionary format for clarity
@@ -249,10 +259,7 @@ class ClickHouseSink(BatchingSink):
                     'unit_current': parsed_item['unit_current'],
                     'inverter_status': parsed_item['inverter_status'],
                     'sensor_timestamp': parsed_item['sensor_timestamp'],
-                    'message_timestamp': parsed_item['message_timestamp'],
-                    'kafka_topic': parsed_item['kafka_topic'],
-                    'kafka_partition': parsed_item['kafka_partition'],
-                    'kafka_offset': parsed_item['kafka_offset']
+                    'message_timestamp': parsed_item['message_timestamp']
                 }
                 rows.append(row)
         
@@ -276,17 +283,27 @@ class ClickHouseSink(BatchingSink):
             except Exception as insert_error:
                 logger.error(f"Insert failed: {insert_error}")
                 logger.error(f"Row data types: {[(k, type(v)) for k, v in rows[0].items()] if rows else 'No rows'}")
-                # Try alternative insert method without column_names parameter
+                logger.error(f"Expected columns: {column_names}")
+                logger.error(f"Row column names: {list(rows[0].keys()) if rows else 'No rows'}")
+                
+                # Try alternative insert method - use direct data without column names
                 try:
-                    logger.info("Trying alternative insert method without column_names")
-                    rows_as_lists = []
-                    for row_dict in rows:
-                        row_list = [row_dict[col_name] for col_name in column_names]
-                        rows_as_lists.append(row_list)
-                    client.insert('solar_panel_data', rows_as_lists)
-                    logger.info(f"Successfully inserted {len(rows_as_lists)} rows using alternative method")
+                    logger.info("Trying alternative insert method using dict format")
+                    client.insert('solar_panel_data', rows)
+                    logger.info(f"Successfully inserted {len(rows)} rows using dict format")
                 except Exception as alt_error:
                     logger.error(f"Alternative insert also failed: {alt_error}")
+                    # Try yet another approach - insert one row at a time to identify the problem
+                    try:
+                        logger.info("Trying to insert first row individually for debugging")
+                        if rows:
+                            first_row = [rows[0][col_name] for col_name in column_names]
+                            logger.info(f"First row data: {first_row}")
+                            logger.info(f"First row types: {[type(x) for x in first_row]}")
+                            client.insert('solar_panel_data', [first_row], column_names=column_names)
+                            logger.info("Single row insert successful")
+                    except Exception as single_error:
+                        logger.error(f"Even single row insert failed: {single_error}")
                     raise
 
     def write(self, batch: SinkBatch):
