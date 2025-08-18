@@ -10,7 +10,7 @@ import json
 import logging
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from datetime import datetime
+from datetime import datetime, timezone
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
@@ -30,12 +30,11 @@ class TimescaleSink(BatchingSink):
     """
 
     def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
-        super().__init__(
-            on_client_connect_success=on_client_connect_success,
-            on_client_connect_failure=on_client_connect_failure
-        )
+        super().__init__()
         self._connection = None
         self._connection_params = self._get_connection_params()
+        self._on_client_connect_success = on_client_connect_success
+        self._on_client_connect_failure = on_client_connect_failure
 
     def _get_connection_params(self):
         """Get database connection parameters from environment variables"""
@@ -135,22 +134,47 @@ class TimescaleSink(BatchingSink):
     def _parse_solar_data(self, message):
         """Parse the solar data from the Kafka message"""
         try:
-            # The message structure has the actual data in the 'value' field as a JSON string
-            if isinstance(message, dict) and 'value' in message:
-                # Parse the JSON string in the value field
-                solar_data = json.loads(message['value']) if isinstance(message['value'], str) else message['value']
+            # Handle two possible message formats:
+            # 1. Direct solar data (what we're actually receiving)
+            # 2. Wrapped format with 'value' field containing JSON string (from schema docs)
+            
+            if isinstance(message, dict):
+                # Check if this is already direct solar panel data
+                if 'panel_id' in message:
+                    solar_data = message
+                    message_datetime = None
+                    logger.debug("Processing direct solar panel data format")
+                elif 'value' in message:
+                    # Parse the JSON string in the value field
+                    solar_data = json.loads(message['value']) if isinstance(message['value'], str) else message['value']
+                    
+                    # Convert message datetime from ISO format if present
+                    message_datetime = None
+                    if 'dateTime' in message:
+                        message_datetime = datetime.fromisoformat(message['dateTime'].replace('Z', '+00:00'))
+                    logger.debug("Processing wrapped solar data format with 'value' field")
+                else:
+                    logger.warning(f"Unexpected message format: {message}")
+                    return None
                 
                 # Convert the original timestamp (looks like nanoseconds) to a proper datetime
                 # The timestamp appears to be in nanoseconds, convert to seconds
                 original_timestamp = solar_data.get('timestamp', 0)
                 
-                # Convert message datetime from ISO format
-                message_datetime = None
-                if 'dateTime' in message:
-                    message_datetime = datetime.fromisoformat(message['dateTime'].replace('Z', '+00:00'))
+                # Use message datetime as the primary timestamp, fallback to converting original timestamp or current time
+                if message_datetime:
+                    timestamp = message_datetime
+                elif original_timestamp and original_timestamp > 0:
+                    # Convert from nanoseconds to seconds and create datetime with UTC timezone
+                    timestamp_seconds = original_timestamp / 1_000_000_000
+                    timestamp = datetime.fromtimestamp(timestamp_seconds, tz=timezone.utc)
+                else:
+                    timestamp = datetime.now(timezone.utc)
                 
-                # Use message datetime as the primary timestamp, fallback to current time
-                timestamp = message_datetime or datetime.utcnow()
+                # Validate essential fields
+                if not solar_data.get('panel_id'):
+                    logger.warning("Missing panel_id in solar data - skipping record")
+                    return None
                 
                 return {
                     'timestamp': timestamp,
@@ -209,6 +233,9 @@ class TimescaleSink(BatchingSink):
                 cursor.executemany(insert_sql, data)
                 self._connection.commit()
                 logger.info(f"Successfully inserted {len(data)} solar data records")
+                if data:
+                    sample_panel = data[0].get('panel_id', 'unknown')
+                    logger.info(f"Sample panel inserted: {sample_panel}")
                 
         except Exception as e:
             self._connection.rollback()
@@ -228,8 +255,6 @@ class TimescaleSink(BatchingSink):
         # Parse the solar data from each message
         parsed_data = []
         for item in batch:
-            print(f"Raw message: {item.value}")  # Debug print for message structure
-            
             parsed = self._parse_solar_data(item.value)
             if parsed:
                 parsed_data.append(parsed)
@@ -296,9 +321,17 @@ def main():
     # Sink the data to TimescaleDB
     sdf.sink(timescale_sink)
 
-    # Run the application for testing with limited message count
+    # Run the application
     logger.info("Starting TimescaleDB solar data sink application...")
-    app.run(count=10, timeout=20)
+    try:
+        # For testing, we can limit the count and add timeout
+        # For production, remove count parameter to run indefinitely
+        app.run(count=10, timeout=20)
+    except KeyboardInterrupt:
+        logger.info("Application stopped by user")
+    except Exception as e:
+        logger.error(f"Application error: {e}")
+        raise
 
 
 # It is recommended to execute Applications under a conditional main
