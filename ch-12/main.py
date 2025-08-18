@@ -31,13 +31,12 @@ class ClickHouseSolarDataSink(BatchingSink):
     """
     
     def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
-        super().__init__(
-            on_client_connect_success=on_client_connect_success,
-            on_client_connect_failure=on_client_connect_failure
-        )
+        super().__init__()
         self._client = None
         self._table_name = "solar_panel_data"
         self._database = os.environ.get('CLICKHOUSE_DATABASE', 'default')
+        self._on_client_connect_success = on_client_connect_success
+        self._on_client_connect_failure = on_client_connect_failure
         
     def setup(self):
         """Initialize ClickHouse client and create table if it doesn't exist"""
@@ -66,13 +65,13 @@ class ClickHouseSolarDataSink(BatchingSink):
             # Create table if it doesn't exist
             self._create_table_if_not_exists()
             
-            if self.on_client_connect_success:
-                self.on_client_connect_success()
+            if self._on_client_connect_success:
+                self._on_client_connect_success()
                 
         except Exception as e:
             logger.error(f"Failed to connect to ClickHouse: {e}")
-            if self.on_client_connect_failure:
-                self.on_client_connect_failure(e)
+            if self._on_client_connect_failure:
+                self._on_client_connect_failure(e)
             raise
     
     def _create_table_if_not_exists(self):
@@ -115,56 +114,92 @@ class ClickHouseSolarDataSink(BatchingSink):
         """Parse the Kafka message and extract solar panel data"""
         try:
             # Print raw message for debugging
-            logger.info(f"Raw message: {item.value}")
+            logger.info(f"Raw message keys: {list(item.value.keys()) if isinstance(item.value, dict) else type(item.value)}")
             
             # The message structure has the actual data in the 'value' field as a JSON string
             message_data = item.value
             
+            # Ensure message_data is a dictionary
+            if not isinstance(message_data, dict):
+                logger.error(f"Expected dict, got {type(message_data)}: {message_data}")
+                return None
+            
             # Parse the nested JSON in the value field
-            if isinstance(message_data.get('value'), str):
-                solar_data = json.loads(message_data['value'])
-            else:
+            value_field = message_data.get('value')
+            if isinstance(value_field, str):
+                try:
+                    solar_data = json.loads(value_field)
+                except json.JSONDecodeError as je:
+                    logger.error(f"Failed to parse JSON in value field: {je}")
+                    logger.error(f"Value field content: {value_field}")
+                    return None
+            elif isinstance(value_field, dict):
                 # If value is already parsed, use it directly
-                solar_data = message_data.get('value', {})
+                solar_data = value_field
+            else:
+                logger.error(f"Unexpected value field type: {type(value_field)}")
+                return None
             
             # Convert epoch timestamp to datetime (handle nanosecond precision)
             sensor_timestamp_ns = solar_data.get('timestamp', 0)
-            if sensor_timestamp_ns > 0:
-                # Convert from nanoseconds to seconds
-                sensor_timestamp = datetime.fromtimestamp(sensor_timestamp_ns / 1e9)
+            if sensor_timestamp_ns and sensor_timestamp_ns > 0:
+                try:
+                    # Convert from nanoseconds to seconds
+                    sensor_timestamp = datetime.fromtimestamp(sensor_timestamp_ns / 1e9)
+                except (ValueError, OverflowError) as e:
+                    logger.warning(f"Invalid timestamp {sensor_timestamp_ns}, using current time: {e}")
+                    sensor_timestamp = datetime.now()
             else:
                 sensor_timestamp = datetime.now()
             
             # Parse message timestamp
             message_timestamp_str = message_data.get('dateTime', '')
             if message_timestamp_str:
-                message_timestamp = datetime.fromisoformat(message_timestamp_str.replace('Z', '+00:00'))
+                try:
+                    message_timestamp = datetime.fromisoformat(message_timestamp_str.replace('Z', '+00:00'))
+                except ValueError as e:
+                    logger.warning(f"Invalid dateTime format {message_timestamp_str}, using current time: {e}")
+                    message_timestamp = datetime.now()
             else:
                 message_timestamp = datetime.now()
             
-            # Map the data to table schema
+            # Helper function to safely convert to float
+            def safe_float(value, default=0.0):
+                try:
+                    return float(value) if value is not None else default
+                except (ValueError, TypeError):
+                    return default
+            
+            # Helper function to safely convert to int
+            def safe_int(value, default=0):
+                try:
+                    return int(value) if value is not None else default
+                except (ValueError, TypeError):
+                    return default
+            
+            # Map the data to table schema with safe type conversions
             record = {
-                'panel_id': solar_data.get('panel_id', ''),
-                'location_id': solar_data.get('location_id', ''),
-                'location_name': solar_data.get('location_name', ''),
-                'latitude': float(solar_data.get('latitude', 0.0)),
-                'longitude': float(solar_data.get('longitude', 0.0)),
-                'timezone': int(solar_data.get('timezone', 0)),
-                'power_output': float(solar_data.get('power_output', 0.0)),
-                'unit_power': solar_data.get('unit_power', 'W'),
-                'temperature': float(solar_data.get('temperature', 0.0)),
-                'unit_temp': solar_data.get('unit_temp', 'C'),
-                'irradiance': float(solar_data.get('irradiance', 0.0)),
-                'unit_irradiance': solar_data.get('unit_irradiance', 'W/m²'),
-                'voltage': float(solar_data.get('voltage', 0.0)),
-                'unit_voltage': solar_data.get('unit_voltage', 'V'),
-                'current': float(solar_data.get('current', 0.0)),
-                'unit_current': solar_data.get('unit_current', 'A'),
-                'inverter_status': solar_data.get('inverter_status', ''),
+                'panel_id': str(solar_data.get('panel_id', '')),
+                'location_id': str(solar_data.get('location_id', '')),
+                'location_name': str(solar_data.get('location_name', '')),
+                'latitude': safe_float(solar_data.get('latitude')),
+                'longitude': safe_float(solar_data.get('longitude')),
+                'timezone': safe_int(solar_data.get('timezone')),
+                'power_output': safe_float(solar_data.get('power_output')),
+                'unit_power': str(solar_data.get('unit_power', 'W')),
+                'temperature': safe_float(solar_data.get('temperature')),
+                'unit_temp': str(solar_data.get('unit_temp', 'C')),
+                'irradiance': safe_float(solar_data.get('irradiance')),
+                'unit_irradiance': str(solar_data.get('unit_irradiance', 'W/m²')),
+                'voltage': safe_float(solar_data.get('voltage')),
+                'unit_voltage': str(solar_data.get('unit_voltage', 'V')),
+                'current': safe_float(solar_data.get('current')),
+                'unit_current': str(solar_data.get('unit_current', 'A')),
+                'inverter_status': str(solar_data.get('inverter_status', '')),
                 'sensor_timestamp': sensor_timestamp,
                 'message_timestamp': message_timestamp,
                 'kafka_offset': item.offset,
-                'kafka_partition': message_data.get('partition', 0)
+                'kafka_partition': safe_int(message_data.get('partition'))
             }
             
             logger.info(f"Parsed solar data for panel {record['panel_id']}: power={record['power_output']}W, temp={record['temperature']}C")
@@ -233,37 +268,49 @@ class ClickHouseSolarDataSink(BatchingSink):
 
 def main():
     """Set up our Application for sinking solar panel data to ClickHouse."""
-
-    # Setup necessary objects
-    app = Application(
-        consumer_group="solar_data_clickhouse_sink",
-        auto_create_topics=True,
-        auto_offset_reset="earliest",
-        # Configure batching for optimal performance
-        commit_interval=5.0,
-        commit_every=100,
-    )
     
-    # Initialize the ClickHouse sink
-    clickhouse_sink = ClickHouseSolarDataSink()
-    
-    # Set up the input topic (using environment variable)
-    input_topic = app.topic(
-        name=os.environ["input"],
-        value_deserializer='json'  # Ensure JSON deserialization
-    )
-    
-    sdf = app.dataframe(topic=input_topic)
+    try:
+        # Get input topic name from environment variable with fallback
+        input_topic_name = os.environ.get("input", "solar-data")
+        logger.info(f"Using input topic: {input_topic_name}")
+        
+        # Setup necessary objects
+        app = Application(
+            consumer_group="solar_data_clickhouse_sink",
+            auto_create_topics=True,
+            auto_offset_reset="earliest",
+            # Configure batching for optimal performance
+            commit_interval=5.0,
+            commit_every=100,
+        )
+        
+        # Initialize the ClickHouse sink
+        clickhouse_sink = ClickHouseSolarDataSink()
+        
+        # Set up the input topic (using environment variable)
+        input_topic = app.topic(
+            name=input_topic_name,
+            value_deserializer='json'  # Ensure JSON deserialization
+        )
+        
+        sdf = app.dataframe(topic=input_topic)
 
-    # Add debug logging to show raw messages
-    sdf = sdf.apply(lambda row: row).print(metadata=True)
+        # Add debug logging to show raw messages
+        sdf = sdf.apply(lambda row: row).print(metadata=True)
 
-    # Sink the data to ClickHouse
-    sdf.sink(clickhouse_sink)
+        # Sink the data to ClickHouse
+        sdf.sink(clickhouse_sink)
 
-    # Run the application with limited message count for testing
-    logger.info("Starting solar data to ClickHouse sink application...")
-    app.run(count=10, timeout=20)
+        # Run the application with limited message count for testing
+        logger.info("Starting solar data to ClickHouse sink application...")
+        app.run(count=10, timeout=20)
+        
+    except KeyError as e:
+        logger.error(f"Missing required environment variable: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Application failed to start: {e}")
+        raise
 
 
 # It is recommended to execute Applications under a conditional main
