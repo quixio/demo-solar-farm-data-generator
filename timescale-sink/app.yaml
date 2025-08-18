@@ -4,7 +4,27 @@ variables:
   - name: input
     inputType: InputTopic
     description: Name of the input topic to listen to.
-    defaultValue: transform
+    defaultValue: solar-data
+  - name: DB_NAME
+    inputType: FreeText
+    defaultValue: metrics
+    required: true
+  - name: DB_USER
+    inputType: FreeText
+    defaultValue: tsadmin
+    required: true
+  - name: DB_PASSWORD
+    inputType: Secret
+    defaultValue: TSDB_SECRET_KEY
+    required: true
+  - name: DB_PORT
+    inputType: FreeText
+    defaultValue: 5432
+    required: true
+  - name: DB_HOST
+    inputType: FreeText
+    defaultValue: timescaledb
+    required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
