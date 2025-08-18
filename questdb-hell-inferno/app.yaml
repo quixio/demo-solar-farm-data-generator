@@ -16,10 +16,6 @@ variables:
   - name: QUESTDB_USERNAME
     inputType: FreeText
     description: QuestDB username (optional)
-  - name: QUESTDB_PASSWORD
-    inputType: Secret
-    description: QuestDB password (optional)
-    defaultValue: QUESTDB_PW
   - name: QUESTDB_DATABASE
     inputType: FreeText
     description: QuestDB database name
@@ -28,7 +24,7 @@ variables:
     inputType: FreeText
     description: Table name for solar panel data
     defaultValue: solar_panel_data
-  - name: QUESTDB_PW
+  - name: LOG_LEVEL
     inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
