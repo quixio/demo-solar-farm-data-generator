@@ -1,4 +1,4 @@
-quixstreams==3.22.0
+quixstreams>=2.5.0
 python-dotenv
-google-cloud-storage==2.10.0
-google-auth==2.23.4
+google-cloud-storage>=2.10.0
+google-auth>=2.23.4
