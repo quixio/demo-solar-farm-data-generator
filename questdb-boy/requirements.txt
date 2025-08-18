@@ -1,2 +1,4 @@
-quixstreams==3.13.1
+quixstreams==3.22.0
 python-dotenv
+requests==2.31.0
+psycopg2-binary==2.9.7
