@@ -29,18 +29,18 @@ class QuestDBSink(BatchingSink):
     """
     
     def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
-        super().__init__(
-            _on_client_connect_success=on_client_connect_success,
-            _on_client_connect_failure=on_client_connect_failure
-        )
+        super().__init__()
         self._sender = None
+        self._on_client_connect_success = on_client_connect_success
+        self._on_client_connect_failure = on_client_connect_failure
         self._host = os.environ.get('QUESTDB_HOST', 'localhost')
         try:
-            self._port = int(os.environ.get('QUESTDB_PORT', '9009'))
+            self._port = int(os.environ.get('QUESTDB_PORT', '8812'))
         except ValueError:
-            self._port = 9009
+            self._port = 8812
         self._username = os.environ.get('QUESTDB_USERNAME', '')
-        self._password = os.environ.get('QUESTDB_PASSWORD', '')
+        # Handle both direct password and secret reference
+        self._password = os.environ.get('QUESTDB_PASSWORD', '') or os.environ.get('QUESTDB_PW', '')
         self._database = os.environ.get('QUESTDB_DATABASE', 'qdb')
         self._table = os.environ.get('QUESTDB_TABLE', 'solar_panel_data')
         
@@ -49,14 +49,23 @@ class QuestDBSink(BatchingSink):
     def setup(self):
         """Set up QuestDB connection and create table if needed"""
         try:
-            # Initialize QuestDB sender
-            auth = None
+            # Initialize QuestDB sender with proper configuration
+            config_parts = [f'http::addr={self._host}:{self._port}']
+            
+            # Add authentication if provided
             if self._username and self._password:
-                auth = (self._username, self._password)
+                config_parts.append(f'username={self._username}')
+                config_parts.append(f'password={self._password}')
             
-            self._sender = Sender.from_conf(f'http::addr={self._host}:{self._port};')
+            config_string = ';'.join(config_parts) + ';'
+            logger.info(f"Connecting to QuestDB with config: {config_string.replace(self._password, '***' if self._password else '')}")
             
-            # Test the connection by trying to send an empty batch
+            self._sender = Sender.from_conf(config_string)
+            
+            # Test the connection by creating a temporary sender context
+            with self._sender:
+                pass  # This will test the connection
+            
             logger.info("QuestDB connection established successfully")
             
             if self._on_client_connect_success:
@@ -72,29 +81,45 @@ class QuestDBSink(BatchingSink):
         """Parse and validate the solar panel sensor data from message"""
         try:
             # Print raw message for debugging
-            print(f'Raw message: {item}')
+            logger.info(f'Raw message type: {type(item)}, content: {str(item)[:200]}...')
             
-            # The value should already be parsed as a dict by Quix Streams JSON deserializer
-            if hasattr(item, 'value'):
-                data = item.value
-                print(f'Message value: {data}')
+            # Handle the message structure based on the Kafka topic schema
+            # The message structure contains a 'value' field that contains the actual solar panel data
+            data = None
+            
+            # Check if it's a dictionary with value field (full Kafka message structure)
+            if isinstance(item, dict) and 'value' in item:
+                data = item['value']
+                logger.info(f'Message value from dict: {str(data)[:200]}...')
                 
-                # If value is still a string, parse it
+                # If value is still a string, parse it as JSON
                 if isinstance(data, str):
                     data = json.loads(data)
-                    
-                # Validate required fields
-                required_fields = ['panel_id', 'location_id', 'timestamp', 'power_output']
-                for field in required_fields:
-                    if field not in data:
-                        raise ValueError(f"Missing required field: {field}")
-                        
-                return data
-            else:
-                raise ValueError("Message does not have a 'value' field")
+            # Check if item has a value attribute (Quix Streams message object)
+            elif hasattr(item, 'value'):
+                data = item.value
+                logger.info(f'Message value from attr: {str(data)[:200]}...')
                 
-        except (json.JSONDecodeError, KeyError, AttributeError) as e:
-            logger.error(f"Failed to parse message data: {e}, item: {item}")
+                # If value is still a string, parse it as JSON
+                if isinstance(data, str):
+                    data = json.loads(data)
+            # If it's already the parsed data
+            elif isinstance(item, dict):
+                data = item
+                logger.info(f'Using message as data directly: {str(data)[:200]}...')
+            else:
+                raise ValueError("Cannot extract data from message format")
+                    
+            # Validate required fields
+            required_fields = ['panel_id', 'location_id', 'timestamp', 'power_output']
+            for field in required_fields:
+                if field not in data:
+                    raise ValueError(f"Missing required field: {field}")
+                        
+            return data
+                
+        except (json.JSONDecodeError, KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Failed to parse message data: {e}, item type: {type(item)}, item: {item}")
             raise ValueError(f"Invalid message format: {e}")
     
     def _convert_to_questdb_record(self, data):
@@ -265,13 +290,16 @@ def main():
         on_client_connect_failure=on_connect_failure
     )
     
+    # Set up the QuestDB connection
+    questdb_sink.setup()
+    
     # Set up input topic with JSON deserializer for the solar data
     input_topic_name = os.environ.get("input", "solar-data")
     logger.info(f"Reading from topic: {input_topic_name}")
     
     input_topic = app.topic(
         name=input_topic_name,
-        value_deserializer='json'  # This will parse the JSON value field automatically
+        value_deserializer='json'  # This will parse the outer JSON structure automatically
     )
     sdf = app.dataframe(topic=input_topic)
 
@@ -284,9 +312,9 @@ def main():
     # Sink data to QuestDB
     sdf.sink(questdb_sink)
 
-    # Run the application with limited message count for testing
-    logger.info("Starting application - will process up to 10 messages")
-    app.run(count=10, timeout=20)
+    # Run the application
+    logger.info("Starting application")
+    app.run()
 
 
 # It is recommended to execute Applications under a conditional main
