@@ -4,7 +4,31 @@ variables:
   - name: input
     inputType: InputTopic
     description: Name of the input topic to listen to.
-    defaultValue: transform
+    defaultValue: solar-data
+  - name: CLICKHOUSE_PASSWORD
+    inputType: Secret
+    defaultValue: CLICKHOUSE_SECRET_KEY
+    required: true
+  - name: CLICKHOUSE_PORT
+    inputType: FreeText
+    defaultValue: 8123
+    required: true
+  - name: CLICKHOUSE_SECURE
+    inputType: FreeText
+    defaultValue: false
+    required: true
+  - name: CLICKHOUSE_USERNAME
+    inputType: FreeText
+    defaultValue: clickadmin
+    required: true
+  - name: CLICKHOUSE_HOST
+    inputType: FreeText
+    defaultValue: clickhouse-test
+    required: true
+  - name: CLICKHOUSE_DATABASE
+    inputType: FreeText
+    defaultValue: default
+    required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
