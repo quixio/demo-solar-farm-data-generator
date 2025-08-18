@@ -1,34 +1,38 @@
 name: my-dumbass-clickhouse
 language: python
 variables:
-  - name: input
-    inputType: InputTopic
-    description: Name of the input topic to listen to.
-    defaultValue: solar-data
-  - name: CLICKHOUSE_HOST
-    inputType: FreeText
-    description: ClickHouse server hostname or IP address
-    defaultValue: clickhouse-test
-  - name: CLICKHOUSE_PORT
-    inputType: FreeText
-    description: ClickHouse server HTTP port
-    defaultValue: 8123
-  - name: CLICKHOUSE_USERNAME
-    inputType: FreeText
-    description: ClickHouse username
-    defaultValue: clickadmin
-  - name: CLICKHOUSE_PASSWORD
-    inputType: Secret
-    description: ClickHouse password
-    defaultValue: CLICKHOUSE_SECRET_KEY
-  - name: CLICKHOUSE_DATABASE
-    inputType: FreeText
-    description: ClickHouse database name
-    defaultValue: default
-  - name: CLICKHOUSE_VERIFY
-    inputType: FreeText
-  - name: CLICKHOUSE_SECURE
-    inputType: FreeText
+- name: input
+  inputType: InputTopic
+  description: Name of the input topic to listen to.
+  defaultValue: solar-data
+- name: CLICKHOUSE_HOST
+  inputType: FreeText
+  description: ClickHouse server hostname or IP address
+  defaultValue: clickhouse-test
+- name: CLICKHOUSE_PORT
+  inputType: FreeText
+  description: ClickHouse server HTTP port
+  defaultValue: '8123'
+- name: CLICKHOUSE_USERNAME
+  inputType: FreeText
+  description: ClickHouse username
+  defaultValue: clickadmin
+- name: CLICKHOUSE_PASSWORD
+  inputType: Secret
+  description: ClickHouse password
+  defaultValue: CLICKHOUSE_SECRET_KEY
+- name: CLICKHOUSE_DATABASE
+  inputType: FreeText
+  description: ClickHouse database name
+  defaultValue: default
+- name: CLICKHOUSE_SECURE
+  inputType: FreeText
+  description: Enable SSL/TLS connection (true/false)
+  defaultValue: 'false'
+- name: CLICKHOUSE_VERIFY
+  inputType: FreeText
+  description: Verify SSL certificates (true/false)
+  defaultValue: 'false'
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py

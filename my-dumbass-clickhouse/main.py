@@ -11,6 +11,13 @@ import logging
 import clickhouse_connect
 from datetime import datetime
 
+# Try to import ClickHouse specific exceptions, fall back if not available
+try:
+    from clickhouse_connect.driver.exceptions import ClickHouseError
+except ImportError:
+    # Fallback for different versions of clickhouse-connect
+    ClickHouseError = Exception
+
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
 # load_dotenv()
@@ -52,20 +59,38 @@ class ClickHouseSolarSink(BatchingSink):
             password = os.environ.get('CLICKHOUSE_PASSWORD', '')
             database = os.environ.get('CLICKHOUSE_DATABASE', 'default')
             
+            # Log connection details (mask password)
+            logger.info(f"ClickHouse connection details: username={username}, database={database}, password={'***' if password else '(empty)'}")
+            secure = os.environ.get('CLICKHOUSE_SECURE', 'false').lower() == 'true'
+            verify = os.environ.get('CLICKHOUSE_VERIFY', 'false').lower() == 'true'
+            
             logger.info(f"Connecting to ClickHouse at {host}:{port}")
             
-            # Create ClickHouse client
+            # Create ClickHouse client with better error handling
+            logger.info(f"ClickHouse connection settings: host={host}, port={port}, database={database}, secure={secure}, verify={verify}")
             self._client = clickhouse_connect.get_client(
                 host=host,
                 port=port,
                 username=username,
                 password=password,
-                database=database
+                database=database,
+                secure=secure,  # Use environment variable
+                verify=verify,  # Use environment variable  
+                connect_timeout=30,  # 30 second connection timeout
+                send_receive_timeout=60  # 60 second send/receive timeout
             )
             
-            # Test connection
+            # Test connection and authentication
             self._client.ping()
             logger.info("ClickHouse connection established successfully")
+            
+            # Test basic query to verify authentication and permissions
+            try:
+                version_result = self._client.query("SELECT version()")
+                logger.info(f"ClickHouse version: {version_result.result_rows[0][0] if version_result.result_rows else 'Unknown'}")
+            except Exception as auth_test_error:
+                logger.error(f"Authentication or permission test failed: {auth_test_error}")
+                raise
             
             # Create table if it doesn't exist
             self._create_table()
@@ -252,12 +277,56 @@ class ClickHouseSolarSink(BatchingSink):
         
         logger.info(f"Writing {len(parsed_data)} solar data records to ClickHouse")
         
+        # Debug: Log a sample of the data being inserted
+        if parsed_data:
+            logger.info(f"Sample data record: {parsed_data[0]}")
+        
         while attempts_remaining:
             try:
-                # Insert data into ClickHouse
+                # Test the connection before attempting to insert
+                self._client.ping()
+                logger.info("ClickHouse connection verified")
+                
+                # Test table access
+                try:
+                    result = self._client.query(f"SELECT COUNT(*) FROM {self._table_name}")
+                    logger.info(f"Table {self._table_name} is accessible, current row count: {result.result_rows[0][0] if result.result_rows else 0}")
+                except Exception as table_error:
+                    logger.error(f"Table access test failed: {table_error}")
+                    # Try to recreate the table
+                    self._create_table()
+                
+                # Prepare the data as a list of tuples for insertion with type conversion
+                data_tuples = []
+                for item in parsed_data:
+                    try:
+                        data_tuple = (
+                            str(item['panel_id']), str(item['location_id']), str(item['location_name']), 
+                            float(item['latitude']), float(item['longitude']), int(item['timezone']),
+                            float(item['power_output']), str(item['unit_power']), 
+                            float(item['temperature']), str(item['unit_temp']),
+                            float(item['irradiance']), str(item['unit_irradiance']), 
+                            float(item['voltage']), str(item['unit_voltage']),
+                            float(item['current']), str(item['unit_current']), 
+                            str(item['inverter_status']), 
+                            item['sensor_timestamp'], item['message_timestamp'], 
+                            int(item['kafka_partition']), int(item['kafka_offset'])
+                        )
+                        data_tuples.append(data_tuple)
+                    except (ValueError, KeyError) as conv_error:
+                        logger.error(f"Data conversion error for item {item}: {conv_error}")
+                        continue
+                
+                if not data_tuples:
+                    logger.error("No valid data tuples after conversion")
+                    return
+                
+                logger.info(f"Prepared {len(data_tuples)} data tuples for insertion")
+                
+                # Insert data into ClickHouse using the standard method
                 self._client.insert(
                     self._table_name,
-                    parsed_data,
+                    data_tuples,
                     column_names=[
                         'panel_id', 'location_id', 'location_name', 'latitude', 'longitude',
                         'timezone', 'power_output', 'unit_power', 'temperature', 'unit_temp',
@@ -269,6 +338,15 @@ class ClickHouseSolarSink(BatchingSink):
                 logger.info(f"Successfully wrote {len(parsed_data)} records to ClickHouse")
                 return
                 
+            except ClickHouseError as e:
+                # ClickHouse specific error
+                logger.error(f"ClickHouse error: {e}")
+                logger.error(f"ClickHouse error code: {getattr(e, 'code', 'N/A')}")
+                logger.error(f"ClickHouse error message: {getattr(e, 'message', str(e))}")
+                attempts_remaining -= 1
+                if attempts_remaining:
+                    time.sleep(3)
+                    
             except ConnectionError as e:
                 # Connection failed, try to reconnect
                 logger.warning(f"Connection error: {e}. Retrying... ({attempts_remaining} attempts left)")
@@ -281,6 +359,10 @@ class ClickHouseSolarSink(BatchingSink):
                         logger.error(f"Failed to re-establish connection: {setup_e}")
                         
             except Exception as e:
+                # Log the full error details for debugging
+                logger.error(f"ClickHouse write error: {type(e).__name__}: {e}")
+                logger.error(f"Error details: {str(e)}")
+                
                 if "timeout" in str(e).lower():
                     # Server timeout, use backpressure
                     logger.warning(f"Timeout error: {e}. Using backpressure...")
