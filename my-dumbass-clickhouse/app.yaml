@@ -1,30 +1,30 @@
 name: my-dumbass-clickhouse
 language: python
 variables:
-  - name: input
-    inputType: InputTopic
-    description: Name of the input topic to listen to.
-    defaultValue: solar-data
-  - name: CLICKHOUSE_HOST
-    inputType: FreeText
-    defaultValue: clickhouse-test
-    required: true
-  - name: CLICKHOUSE_USERNAME
-    inputType: FreeText
-    defaultValue: clickadmin
-    required: true
-  - name: CLICKHOUSE_PORT
-    inputType: FreeText
-    defaultValue: 8123
-    required: true
-  - name: CLICKHOUSE_PASSWORD
-    inputType: Secret
-    defaultValue: CLICKHOUSE_SECRET_KEY
-    required: true
-  - name: CLICKHOUSE_DATABASE
-    inputType: FreeText
-    defaultValue: default
-    required: true
+- name: input
+  inputType: InputTopic
+  description: Name of the input topic to listen to.
+  defaultValue: solar-data
+- name: CLICKHOUSE_HOST
+  inputType: FreeText
+  description: ClickHouse server hostname or IP address
+  defaultValue: clickhouse-test
+- name: CLICKHOUSE_PORT
+  inputType: FreeText
+  description: ClickHouse server HTTP port
+  defaultValue: '8123'
+- name: CLICKHOUSE_USERNAME
+  inputType: FreeText
+  description: ClickHouse username
+  defaultValue: clickadmin
+- name: CLICKHOUSE_PASSWORD
+  inputType: Secret
+  description: ClickHouse password
+  defaultValue: CLICKHOUSE_SECRET_KEY
+- name: CLICKHOUSE_DATABASE
+  inputType: FreeText
+  description: ClickHouse database name
+  defaultValue: default
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
