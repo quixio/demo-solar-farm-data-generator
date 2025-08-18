@@ -4,7 +4,29 @@ variables:
   - name: input
     inputType: InputTopic
     description: Name of the input topic to listen to.
-    defaultValue: transform
+    defaultValue: solar-data
+  - name: QUESTDB_PORT
+    inputType: FreeText
+    defaultValue: 8812
+    required: true
+  - name: QUESTDB_TABLE
+    inputType: FreeText
+    defaultValue: solar_panel_data
+    required: true
+  - name: QUESTDB_DATABASE
+    inputType: FreeText
+    defaultValue: qdb
+    required: true
+  - name: QUESTDB_PASSWORD
+    inputType: Secret
+    defaultValue: QUESTDB_PW
+    required: true
+  - name: QUESTDB_HOST
+    inputType: FreeText
+    defaultValue: questdb
+    required: true
+  - name: QUESTDB_USERNAME
+    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
