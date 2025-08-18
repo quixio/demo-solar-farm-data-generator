@@ -127,12 +127,17 @@ class QuestDBSink(BatchingSink):
                     # Fallback to current time if timestamp is missing
                     timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
                 
-                # Prepare values for insertion
+                # Prepare values for insertion - handle quote escaping properly for all string fields
+                panel_id = solar_data.get('panel_id', '').replace("'", "''")
+                location_id = solar_data.get('location_id', '').replace("'", "''")
+                location_name = solar_data.get('location_name', '').replace("'", "''")
+                inverter_status = solar_data.get('inverter_status', '').replace("'", "''")
+                
                 values = (
                     f"'{timestamp}'",  # timestamp
-                    f"'{solar_data.get('panel_id', '')}'",  # panel_id
-                    f"'{solar_data.get('location_id', '')}'",  # location_id
-                    f"'{solar_data.get('location_name', '').replace(\"'\", \"''\")}'",  # location_name (escape quotes)
+                    f"'{panel_id}'",  # panel_id
+                    f"'{location_id}'",  # location_id
+                    f"'{location_name}'",  # location_name (escape quotes)
                     str(solar_data.get('latitude', 0)),  # latitude
                     str(solar_data.get('longitude', 0)),  # longitude
                     str(solar_data.get('timezone', 0)),  # timezone
@@ -141,7 +146,7 @@ class QuestDBSink(BatchingSink):
                     str(solar_data.get('irradiance', 0)),  # irradiance
                     str(solar_data.get('voltage', 0)),  # voltage
                     str(solar_data.get('current', 0)),  # current
-                    f"'{solar_data.get('inverter_status', '')}'",  # inverter_status
+                    f"'{inverter_status}'",  # inverter_status
                     str(raw_ts)  # raw_timestamp
                 )
                 
@@ -271,9 +276,8 @@ def main():
     sdf.sink(questdb_sink)
 
     # With our pipeline defined, now run the Application
-    # Run for testing with limited messages
     logger.info("Starting solar data sink to QuestDB...")
-    app.run(count=10, timeout=20)
+    app.run()
 
 
 # It is recommended to execute Applications under a conditional main
