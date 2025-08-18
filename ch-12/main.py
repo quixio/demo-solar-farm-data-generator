@@ -2,7 +2,7 @@
 # For general info, see https://quix.io/docs/quix-streams/introduction.html
 # For sinks, see https://quix.io/docs/quix-streams/connectors/sinks/index.html
 from quixstreams import Application
-from quixstreams.sinks import BatchingSink, SinkBatch, SinkBackpressureError
+from quixstreams.sinks import BaseSink, SinkBackpressureError
 
 import os
 import time
@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class ClickHouseSolarDataSink(BatchingSink):
+class ClickHouseSolarDataSink(BaseSink):
     """
     A custom sink for writing solar panel sensor data to ClickHouse database.
     
@@ -30,49 +30,46 @@ class ClickHouseSolarDataSink(BatchingSink):
     timestamp conversion.
     """
     
-    def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
+    def __init__(self):
         super().__init__()
         self._client = None
         self._table_name = "solar_panel_data"
         self._database = os.environ.get('CLICKHOUSE_DATABASE', 'default')
-        self._on_client_connect_success = on_client_connect_success
-        self._on_client_connect_failure = on_client_connect_failure
-        
-    def setup(self):
-        """Initialize ClickHouse client and create table if it doesn't exist"""
-        try:
-            # Parse port safely
+        self._initialized = False
+    
+    def _ensure_setup(self):
+        """Ensure ClickHouse client is initialized"""
+        if not self._initialized:
             try:
-                port = int(os.environ.get('CLICKHOUSE_PORT', '8123'))
-            except ValueError:
-                logger.warning("Invalid CLICKHOUSE_PORT, using default 8123")
-                port = 8123
-            
-            # Initialize ClickHouse client
-            self._client = get_client(
-                host=os.environ.get('CLICKHOUSE_HOST', 'localhost'),
-                port=port,
-                username=os.environ.get('CLICKHOUSE_USERNAME', 'default'),
-                password=os.environ.get('CLICKHOUSE_PASSWORD', ''),
-                database=self._database,
-                secure=os.environ.get('CLICKHOUSE_SECURE', 'false').lower() == 'true'
-            )
-            
-            # Test connection
-            self._client.ping()
-            logger.info(f"Successfully connected to ClickHouse at {os.environ.get('CLICKHOUSE_HOST', 'localhost')}:{port}")
-            
-            # Create table if it doesn't exist
-            self._create_table_if_not_exists()
-            
-            if self._on_client_connect_success:
-                self._on_client_connect_success()
+                # Parse port safely
+                try:
+                    port = int(os.environ.get('CLICKHOUSE_PORT', '8123'))
+                except ValueError:
+                    logger.warning("Invalid CLICKHOUSE_PORT, using default 8123")
+                    port = 8123
                 
-        except Exception as e:
-            logger.error(f"Failed to connect to ClickHouse: {e}")
-            if self._on_client_connect_failure:
-                self._on_client_connect_failure(e)
-            raise
+                # Initialize ClickHouse client
+                self._client = get_client(
+                    host=os.environ.get('CLICKHOUSE_HOST', 'localhost'),
+                    port=port,
+                    username=os.environ.get('CLICKHOUSE_USERNAME', 'default'),
+                    password=os.environ.get('CLICKHOUSE_PASSWORD', ''),
+                    database=self._database,
+                    secure=os.environ.get('CLICKHOUSE_SECURE', 'false').lower() == 'true'
+                )
+                
+                # Test connection
+                self._client.ping()
+                logger.info(f"Successfully connected to ClickHouse at {os.environ.get('CLICKHOUSE_HOST', 'localhost')}:{port}")
+                
+                # Create table if it doesn't exist
+                self._create_table_if_not_exists()
+                
+                self._initialized = True
+                    
+            except Exception as e:
+                logger.error(f"Failed to connect to ClickHouse: {e}")
+                raise
     
     def _create_table_if_not_exists(self):
         """Create the solar panel data table with appropriate schema"""
@@ -210,29 +207,42 @@ class ClickHouseSolarDataSink(BatchingSink):
             logger.error(f"Message content: {item.value}")
             return None
 
-    def write(self, batch: SinkBatch):
-        """Write batch of solar panel data to ClickHouse"""
+    def add(self, value, key=None, timestamp=None, headers=None):
+        """Add a message to the sink (required by BaseSink)"""
+        try:
+            self._ensure_setup()
+            
+            # Create a mock message item for parsing compatibility
+            class MockItem:
+                def __init__(self, value, offset=None):
+                    self.value = value
+                    self.offset = offset or 0
+            
+            item = MockItem(value)
+            record = self._parse_message(item)
+            
+            if not record:
+                logger.warning("No valid record to write")
+                return
+                
+            self._write_single_record(record)
+        except Exception as e:
+            logger.error(f"Error in sink.add(): {e}")
+            # Re-raise to ensure the application handles the error properly
+            raise
+    
+    def _write_single_record(self, record):
+        """Write single record to ClickHouse"""
         attempts_remaining = 3
         
-        # Parse all messages in the batch
-        records = []
-        for item in batch:
-            record = self._parse_message(item)
-            if record:
-                records.append(record)
-        
-        if not records:
-            logger.warning("No valid records to write in batch")
-            return
-            
-        logger.info(f"Writing {len(records)} solar panel records to ClickHouse")
+        logger.info(f"Writing solar panel record to ClickHouse for panel {record['panel_id']}")
         
         while attempts_remaining:
             try:
                 # Insert data into ClickHouse
                 self._client.insert(
                     f"{self._database}.{self._table_name}",
-                    records,
+                    [record],
                     column_names=[
                         'panel_id', 'location_id', 'location_name', 'latitude', 'longitude',
                         'timezone', 'power_output', 'unit_power', 'temperature', 'unit_temp',
@@ -241,29 +251,39 @@ class ClickHouseSolarDataSink(BatchingSink):
                         'kafka_offset', 'kafka_partition'
                     ]
                 )
-                logger.info(f"Successfully wrote {len(records)} records to ClickHouse")
+                logger.info(f"Successfully wrote record to ClickHouse for panel {record['panel_id']}")
                 return
                 
             except ClickHouseError as e:
-                logger.error(f"ClickHouse error while writing batch: {e}")
+                logger.error(f"ClickHouse error while writing record: {e}")
                 attempts_remaining -= 1
                 if attempts_remaining:
                     time.sleep(3)
                 else:
-                    # If it's a temporary issue, use backpressure
-                    if "timeout" in str(e).lower() or "too many" in str(e).lower():
-                        raise SinkBackpressureError(
-                            retry_after=30.0,
-                            topic=batch.topic,
-                            partition=batch.partition,
-                        )
+                    raise e
             except Exception as e:
                 logger.error(f"Unexpected error while writing to ClickHouse: {e}")
                 attempts_remaining -= 1
                 if attempts_remaining:
                     time.sleep(3)
         
-        raise Exception(f"Failed to write batch to ClickHouse after 3 attempts")
+        raise Exception(f"Failed to write record to ClickHouse after 3 attempts")
+    
+    def flush(self, topic, partition):
+        """
+        Flush any buffered data to ClickHouse.
+        
+        This method is required by the BaseSink abstract class.
+        Since we write records immediately in the add() method,
+        there's no buffered data to flush, so this is a no-op.
+        
+        Args:
+            topic: The Kafka topic name
+            partition: The Kafka partition number
+        """
+        # No buffering implemented, so nothing to flush
+        logger.debug(f"Flush called for topic {topic}, partition {partition} - no buffered data to flush")
+        pass
 
 
 def main():
@@ -301,9 +321,9 @@ def main():
         # Sink the data to ClickHouse
         sdf.sink(clickhouse_sink)
 
-        # Run the application with limited message count for testing
+        # Run the application continuously
         logger.info("Starting solar data to ClickHouse sink application...")
-        app.run(count=10, timeout=20)
+        app.run()
         
     except KeyError as e:
         logger.error(f"Missing required environment variable: {e}")
