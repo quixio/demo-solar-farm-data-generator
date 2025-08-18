@@ -1,30 +1,31 @@
 name: my-idiot-clickhouse
 language: python
 variables:
-  - name: input
-    inputType: InputTopic
-    description: Name of the input topic to listen to.
-    defaultValue: solar-data
-  - name: CLICKHOUSE_PASSWORD
-    inputType: Secret
-    defaultValue: CLICKHOUSE_SECRET_KEY
-    required: true
-  - name: CLICKHOUSE_HOST
-    inputType: FreeText
-    defaultValue: clickhouse-test
-    required: true
-  - name: CLICKHOUSE_DATABASE
-    inputType: FreeText
-    defaultValue: default
-    required: true
-  - name: CLICKHOUSE_PORT
-    inputType: FreeText
-    defaultValue: 9000
-    required: true
-  - name: CLICKHOUSE_USER
-    inputType: FreeText
-    defaultValue: clickadmin
-    required: true
+- name: input
+  inputType: InputTopic
+  description: Name of the input topic to listen to.
+  defaultValue: solar-data
+- name: CLICKHOUSE_HOST
+  inputType: FreeText
+  description: ClickHouse server hostname or IP address.
+  defaultValue: clickhouse-test
+- name: CLICKHOUSE_PORT
+  inputType: FreeText
+  description: ClickHouse server port number.
+  defaultValue: '9000'
+- name: CLICKHOUSE_DATABASE
+  inputType: FreeText
+  description: ClickHouse database name.
+  defaultValue: default
+- name: CLICKHOUSE_USER
+  inputType: FreeText
+  description: ClickHouse username.
+  defaultValue: clickadmin
+- name: CLICKHOUSE_PASSWORD
+  inputType: Secret
+  description: ClickHouse password for authentication.
+  defaultValue: CLICKHOUSE_SECRET_KEY
+  required: false
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
