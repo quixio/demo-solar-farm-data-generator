@@ -25,6 +25,14 @@ variables:
   inputType: FreeText
   description: ClickHouse database name
   defaultValue: default
+- name: CLICKHOUSE_SECURE
+  inputType: FreeText
+  description: Enable SSL/TLS connection (true/false)
+  defaultValue: 'false'
+- name: CLICKHOUSE_VERIFY
+  inputType: FreeText
+  description: Verify SSL certificates (true/false)
+  defaultValue: 'false'
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
