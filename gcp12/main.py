@@ -69,16 +69,19 @@ class GCSCSVSink(BatchingSink):
     def _convert_timestamp_to_datetime(self, timestamp):
         """Convert epoch timestamp to readable datetime string"""
         try:
+            if not isinstance(timestamp, (int, float)):
+                return str(timestamp)
+            
             # Handle both seconds and nanoseconds timestamps
             if timestamp > 1e12:  # Likely nanoseconds
                 dt = datetime.fromtimestamp(timestamp / 1e9)
-            elif timestamp > 1e9:  # Likely milliseconds
+            elif timestamp > 1e9:  # Likely milliseconds  
                 dt = datetime.fromtimestamp(timestamp / 1e3)
             else:  # Likely seconds
                 dt = datetime.fromtimestamp(timestamp)
             
             return dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]  # Include milliseconds
-        except (ValueError, OSError) as e:
+        except (ValueError, OSError, OverflowError) as e:
             logger.warning(f"Failed to convert timestamp {timestamp}: {e}")
             return str(timestamp)  # Return original if conversion fails
 
@@ -140,7 +143,7 @@ class GCSCSVSink(BatchingSink):
         Handles retry logic for connection issues and backpressure for temporary failures.
         """
         attempts_remaining = 3
-        logger.info(f"Writing batch of {len(batch)} messages to GCS")
+        logger.info("Writing batch to GCS")
         
         while attempts_remaining:
             try:
@@ -166,6 +169,7 @@ class GCSCSVSink(BatchingSink):
                     writer.writeheader()
                 
                 # Process each message in the batch
+                processed_count = 0
                 for item in batch:
                     # Debug: Show raw message structure
                     logger.info(f"Raw message: {item.value}")
@@ -173,6 +177,7 @@ class GCSCSVSink(BatchingSink):
                     try:
                         extracted_data = self._extract_solar_data(item.value)
                         writer.writerow(extracted_data)
+                        processed_count += 1
                         logger.debug(f"Processed message: {extracted_data['panel_id']}")
                     except Exception as e:
                         logger.error(f"Failed to process message: {e}")
@@ -194,7 +199,7 @@ class GCSCSVSink(BatchingSink):
                     content_type='text/csv'
                 )
                 
-                logger.info(f"Successfully wrote {len(batch)} records to {self.bucket_name}/{self.csv_filename}")
+                logger.info(f"Successfully wrote {processed_count} records to {self.bucket_name}/{self.csv_filename}")
                 return
                 
             except Exception as e:
