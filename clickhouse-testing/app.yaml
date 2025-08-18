@@ -1,10 +1,34 @@
 name: clickhouse-testing
 language: python
 variables:
-  - name: input
-    inputType: InputTopic
-    description: Name of the input topic to listen to.
-    defaultValue: transform
+- name: input
+  inputType: InputTopic
+  description: Name of the input topic to listen to.
+  defaultValue: solar-data
+- name: CLICKHOUSE_HOST
+  inputType: FreeText
+  description: ClickHouse server hostname
+  defaultValue: clickhouse-test
+- name: CLICKHOUSE_PORT
+  inputType: FreeText
+  description: ClickHouse server port
+  defaultValue: '8123'
+- name: CLICKHOUSE_DATABASE
+  inputType: FreeText
+  description: ClickHouse database name
+  defaultValue: default
+- name: CLICKHOUSE_USER
+  inputType: FreeText
+  description: ClickHouse username
+  defaultValue: clickadmin
+- name: CLICKHOUSE_PASSWORD
+  inputType: Secret
+  description: ClickHouse password
+  defaultValue: CLICKHOUSE_SECRET_KEY
+- name: CLICKHOUSE_SECURE
+  inputType: FreeText
+  description: Use secure connection (true/false)
+  defaultValue: 'false'
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
