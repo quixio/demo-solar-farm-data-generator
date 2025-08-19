@@ -23,8 +23,20 @@ def load_gcp_credentials():
         if not credentials_json:
             raise ValueError("GCP_SERVICE_ACCOUNT_KEY environment variable is not set")
         
+        if not credentials_json.strip():
+            raise ValueError("GCP_SERVICE_ACCOUNT_KEY environment variable is empty")
+        
         # Parse JSON credentials
-        credentials_info = json.loads(credentials_json)
+        try:
+            credentials_info = json.loads(credentials_json)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in GCP_SERVICE_ACCOUNT_KEY: {e}. Please ensure the JSON is properly formatted.")
+        
+        # Validate required fields in service account JSON
+        required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
+        missing_fields = [field for field in required_fields if field not in credentials_info]
+        if missing_fields:
+            raise ValueError(f"Service account JSON missing required fields: {', '.join(missing_fields)}")
         
         # Create credentials object
         credentials = service_account.Credentials.from_service_account_info(
@@ -35,8 +47,9 @@ def load_gcp_credentials():
         print("✓ GCP credentials loaded successfully")
         return credentials
         
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON in GCP_SERVICE_ACCOUNT_KEY: {e}")
+    except ValueError:
+        # Re-raise ValueError as is
+        raise
     except Exception as e:
         raise ValueError(f"Failed to load GCP credentials: {e}")
 
@@ -87,9 +100,23 @@ def test_gcp_storage_connection():
         
         # Get file metadata
         print("\nFile Metadata:")
-        print(f"  Size: {blob.size:,} bytes")
-        print(f"  Content Type: {blob.content_type}")
-        print(f"  Last Modified: {blob.updated}")
+        try:
+            # Reload blob to ensure we have all metadata
+            blob.reload()
+            
+            # Safe formatting with None checks
+            size = blob.size if blob.size is not None else 0
+            content_type = blob.content_type if blob.content_type is not None else "Unknown"
+            updated = blob.updated if blob.updated is not None else "Unknown"
+            
+            print(f"  Size: {size:,} bytes")
+            print(f"  Content Type: {content_type}")
+            print(f"  Last Modified: {updated}")
+        except Exception as e:
+            print(f"  Warning: Could not retrieve metadata: {e}")
+            print(f"  Size: Unknown")
+            print(f"  Content Type: Unknown")
+            print(f"  Last Modified: Unknown")
         
         # Read and parse CSV data
         print("\nReading CSV data...")
@@ -116,18 +143,28 @@ def test_gcp_storage_connection():
         
         sample_size = min(10, len(df))
         for i in range(sample_size):
-            row = df.iloc[i]
-            print(f"\nRecord {i + 1}:")
-            for col in df.columns:
-                value = row[col]
-                # Format the output nicely
-                if pd.isna(value):
-                    formatted_value = "null"
-                elif isinstance(value, float):
-                    formatted_value = f"{value:.6f}" if value != int(value) else str(int(value))
-                else:
-                    formatted_value = str(value)
-                print(f"  {col}: {formatted_value}")
+            try:
+                row = df.iloc[i]
+                print(f"\nRecord {i + 1}:")
+                for col in df.columns:
+                    try:
+                        value = row[col]
+                        # Format the output nicely - handle None/NaN values safely
+                        if pd.isna(value) or value is None:
+                            formatted_value = "null"
+                        elif isinstance(value, float):
+                            # Check if the float can be converted to int without losing precision
+                            try:
+                                formatted_value = f"{value:.6f}" if value != int(value) else str(int(value))
+                            except (ValueError, OverflowError):
+                                formatted_value = str(value)
+                        else:
+                            formatted_value = str(value) if value is not None else "null"
+                        print(f"  {col}: {formatted_value}")
+                    except Exception as e:
+                        print(f"  {col}: <Error formatting value: {e}>")
+            except Exception as e:
+                print(f"Error processing record {i + 1}: {e}")
         
         print("\n" + "=" * 50)
         print("CONNECTION TEST SUMMARY")
