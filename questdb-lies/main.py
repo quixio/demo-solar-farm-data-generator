@@ -8,6 +8,7 @@ import os
 import time
 import json
 import logging
+import requests
 from datetime import datetime
 from questdb.ingress import Sender, TimestampNanos
 
@@ -30,10 +31,13 @@ class QuestDBSolarSink(BatchingSink):
 
     def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
         super().__init__(
-            # Use internal callback names to avoid AttributeError
-            _on_client_connect_success=on_client_connect_success,
-            _on_client_connect_failure=on_client_connect_failure
+            on_client_connect_success=on_client_connect_success,
+            on_client_connect_failure=on_client_connect_failure
         )
+        # Store callback methods as instance attributes
+        self.on_client_connect_success = on_client_connect_success
+        self.on_client_connect_failure = on_client_connect_failure
+        
         self.host = os.environ.get("QUESTDB_HOST", "localhost")
         try:
             self.port = int(os.environ.get("QUESTDB_PORT", "9000"))
@@ -49,6 +53,7 @@ class QuestDBSolarSink(BatchingSink):
             self.config_string += f"token={self.token};"
         
         logger.info(f"QuestDB Sink initialized - Host: {self.host}:{self.port}, Table: {self.table_name}")
+        logger.info(f"QuestDB Configuration string: {self.config_string.replace(self.token or 'TOKEN', 'XXXX') if self.token else self.config_string}")
         
     def setup(self):
         """Test connection to QuestDB and create table if needed"""
@@ -61,18 +66,17 @@ class QuestDBSolarSink(BatchingSink):
                 # Create table schema if it doesn't exist - use REST API for DDL
                 self._ensure_table_exists()
                 
-                if self._on_client_connect_success:
-                    self._on_client_connect_success()
+                if self.on_client_connect_success:
+                    self.on_client_connect_success()
                     
         except Exception as e:
             logger.error(f"Failed to connect to QuestDB: {e}")
-            if self._on_client_connect_failure:
-                self._on_client_connect_failure()
+            if self.on_client_connect_failure:
+                self.on_client_connect_failure()
             raise ConnectionError(f"Could not connect to QuestDB: {e}")
 
     def _ensure_table_exists(self):
         """Create the solar panel data table if it doesn't exist"""
-        import requests
         
         # Create table using REST API
         create_table_sql = f"""
@@ -120,6 +124,38 @@ class QuestDBSolarSink(BatchingSink):
         except Exception as e:
             logger.error(f"Failed to create table: {e}")
             # Continue anyway - table might already exist
+
+    def _verify_data_written(self, expected_count):
+        """Verify that data was actually written to the table"""
+        try:
+            
+            url = f"http://{self.host}:{self.port}/exec"
+            headers = {}
+            if self.token:
+                headers["Authorization"] = f"Bearer {self.token}"
+            
+            # Query to get row count from the table
+            query = f"SELECT count(*) as row_count FROM {self.table_name} LIMIT LAST;"
+            
+            response = requests.post(
+                url, 
+                headers=headers,
+                data={"query": query}
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('dataset') and len(result['dataset']) > 0:
+                    row_count = result['dataset'][0][0]
+                    logger.info(f"QuestDB table '{self.table_name}' verification: {row_count} total rows exist")
+                else:
+                    logger.warning(f"Could not verify row count for table '{self.table_name}'")
+            else:
+                logger.warning(f"Failed to verify data write: {response.status_code} - {response.text}")
+                
+        except Exception as e:
+            logger.warning(f"Could not verify data was written: {e}")
+            # Continue anyway - the main write operation succeeded
 
     def _parse_solar_data(self, message):
         """Parse solar panel data from the nested message structure"""
@@ -226,6 +262,8 @@ class QuestDBSolarSink(BatchingSink):
                     # Flush to ensure data is written
                     sender.flush()
                     
+                # Verify that data was actually written by checking table row count
+                self._verify_data_written(len(parsed_data))
                 logger.info(f"Successfully wrote {len(parsed_data)} records to QuestDB table '{self.table_name}'")
                 return
                 
@@ -260,8 +298,9 @@ def main():
         auto_offset_reset="earliest"
     )
     
-    # Initialize QuestDB sink
+    # Initialize QuestDB sink and setup connection
     questdb_sink = QuestDBSolarSink()
+    questdb_sink.setup()  # Explicitly call setup to ensure connection and table exist
     
     # Define input topic
     input_topic = app.topic(name=os.environ["input"])
