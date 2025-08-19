@@ -45,6 +45,8 @@ class QuestDBSink(BatchingSink):
         
         # Initialize connection flag
         self._is_setup = False
+        self._is_shutting_down = False
+        self._cleanup_called = False
 
     def setup(self):
         """
@@ -76,17 +78,38 @@ class QuestDBSink(BatchingSink):
         """
         Cleanup resources when the sink is shutting down.
         """
+        if self._cleanup_called:
+            print("Cleanup already called, skipping...")
+            return
+            
+        print("QuestDB sink cleanup initiated...")
+        self._cleanup_called = True
+        self._is_shutting_down = True
+        
         if self._sender:
             try:
-                # Ensure all pending data is flushed before closing
-                self._sender.flush()
-                self._sender.close()
+                # Check if sender is still open before attempting operations
+                if not hasattr(self._sender, '_closed') or not self._sender._closed:
+                    # Ensure all pending data is flushed before closing
+                    print("Flushing remaining data before shutdown...")
+                    self._sender.flush()
+                    self._sender.close()
                 self._sender = None
                 self._is_setup = False
                 print("QuestDB connection closed successfully")
             except Exception as e:
                 print(f"Error closing QuestDB connection: {e}")
+                # Don't raise the error during cleanup
+                self._sender = None
                 self._is_setup = False
+    
+    def close(self):
+        """
+        Close method called by Quix Streams framework when shutting down.
+        This ensures proper cleanup sequence.
+        """
+        print("QuestDB sink close() called")
+        self.cleanup()
     
     def _parse_solar_data(self, item):
         """
@@ -134,9 +157,22 @@ class QuestDBSink(BatchingSink):
                 else:
                     conf = f"http::addr={self._questdb_host}:{self._questdb_port};"
                 
-                print(f"Creating QuestDB sender with config: {conf.replace(self._questdb_password or '', '***') if self._questdb_password else conf}")
+                # Mask sensitive info for logging
+                safe_conf = conf
+                if self._questdb_token:
+                    safe_conf = conf.replace(self._questdb_token, '***')
+                if self._questdb_password:
+                    safe_conf = safe_conf.replace(self._questdb_password, '***')
+                print(f"Creating QuestDB sender with config: {safe_conf}")
                 self._sender = Sender.from_conf(conf)
                 print("QuestDB sender created successfully")
+                
+                # Print diagnostics
+                print(f"Sender object: {self._sender}")
+                print(f"Sender type: {type(self._sender)}")
+                if hasattr(self._sender, '_closed'):
+                    print(f"Sender closed state: {self._sender._closed}")
+                    
             except Exception as e:
                 print(f"Failed to create QuestDB sender: {e}")
                 raise
@@ -148,8 +184,22 @@ class QuestDBSink(BatchingSink):
         This method processes each message in the batch, extracts the solar panel
         data, and writes it to QuestDB using the ILP protocol.
         """
+        # Check if we're shutting down
+        if self._is_shutting_down:
+            print("Sink is shutting down, skipping write operation")
+            return
+            
         # Ensure sender is available
         self._ensure_sender()
+        
+        # Check if sender is closed before proceeding
+        if hasattr(self._sender, '_closed') and self._sender._closed:
+            if self._is_shutting_down:
+                print("Sender is closed during shutdown, skipping batch")
+                return
+            print("Sender is closed, recreating...")
+            self._sender = None
+            self._ensure_sender()
         
         print(f"About to write batch, sender: {type(self._sender)}")
         
@@ -161,6 +211,14 @@ class QuestDBSink(BatchingSink):
                 # Process each item in the batch
                 for item in batch:
                     try:
+                        # Check if we're shutting down or sender is closed
+                        if self._is_shutting_down:
+                            print("Shutting down during batch processing, skipping remaining items")
+                            break
+                        if hasattr(self._sender, '_closed') and self._sender._closed:
+                            print("Sender closed during batch processing, skipping remaining items")
+                            break
+                            
                         # Parse the solar panel data from the message
                         solar_data = self._parse_solar_data(item)
                         
@@ -212,10 +270,24 @@ class QuestDBSink(BatchingSink):
                         # Continue processing other messages in the batch
                         continue
                 
-                # Flush all rows in the batch
-                self._sender.flush()
+                # Flush all rows in the batch only if sender is still open and we're not shutting down
+                if processed_count > 0:
+                    if self._is_shutting_down:
+                        print(f"Batch had {processed_count} processed messages but sink is shutting down, skipping flush")
+                    elif not self._sender:
+                        print(f"Batch had {processed_count} processed messages but sender is None, skipping flush")
+                    elif hasattr(self._sender, '_closed') and self._sender._closed:
+                        print(f"Batch had {processed_count} processed messages but sender was closed, skipping flush")
+                    else:
+                        try:
+                            self._sender.flush()
+                            print(f"Successfully wrote batch of {processed_count} messages to QuestDB table '{self._table_name}'")
+                        except Exception as flush_error:
+                            print(f"Error flushing batch: {flush_error}")
+                            # Don't re-raise flush errors during shutdown sequence
+                            if not self._is_shutting_down:
+                                raise
                     
-                print(f"Successfully wrote batch of {processed_count} messages to QuestDB table '{self._table_name}'")
                 return  # Success, exit the retry loop
                 
             except ConnectionError as e:
@@ -223,6 +295,9 @@ class QuestDBSink(BatchingSink):
                 attempts_remaining -= 1
                 if attempts_remaining:
                     time.sleep(3)
+                    # Try to recreate the sender
+                    self._sender = None
+                    self._ensure_sender()
             except TimeoutError as e:
                 print(f"Timeout error writing to QuestDB: {e}")
                 raise SinkBackpressureError(
@@ -231,10 +306,52 @@ class QuestDBSink(BatchingSink):
                     partition=batch.partition,
                 )
             except Exception as e:
-                print(f"Unexpected error writing to QuestDB: {e}")
-                raise
+                error_message = str(e).lower()
+                if "sender is closed" in error_message or "closed" in error_message:
+                    if self._is_shutting_down:
+                        print(f"Sender closed during shutdown: {e}, skipping retry")
+                        return  # Exit gracefully during shutdown
+                    print(f"Sender closed error: {e}, attempting to recreate sender...")
+                    attempts_remaining -= 1
+                    if attempts_remaining:
+                        self._sender = None
+                        try:
+                            self._ensure_sender()
+                            time.sleep(1)  # Brief pause before retry
+                        except Exception as recreate_error:
+                            print(f"Failed to recreate sender: {recreate_error}")
+                            if attempts_remaining == 1:  # Last attempt
+                                raise
+                else:
+                    print(f"Unexpected error writing to QuestDB: {e}")
+                    raise
         
         raise Exception("Failed to write to QuestDB after 3 attempts")
+
+    def flush(self):
+        """
+        Flush any pending data. Called by the framework during checkpoint commits.
+        """
+        if self._is_shutting_down or self._cleanup_called:
+            print("Flush called during shutdown, skipping")
+            return
+            
+        if self._sender:
+            try:
+                if not hasattr(self._sender, '_closed') or not self._sender._closed:
+                    self._sender.flush()
+                    print("QuestDB sink flushed pending data")
+                else:
+                    print("Sender is closed, skipping flush")
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "closed" in error_msg:
+                    print(f"Sender closed during flush: {e}")
+                    # Mark as shutting down to prevent further operations
+                    self._is_shutting_down = True
+                else:
+                    print(f"Error flushing QuestDB sink: {e}")
+                    # Don't re-raise to avoid disrupting checkpoint commits
 
 
 def main():
@@ -273,9 +390,12 @@ def main():
     try:
         # Run the application for testing (process 10 messages then stop)
         app.run(count=10, timeout=20)
-    finally:
-        # Ensure proper cleanup of the QuestDB connection
-        questdb_sink.cleanup()
+        print("Application completed successfully")
+    except KeyboardInterrupt:
+        print("Application interrupted by user")
+    except Exception as e:
+        print(f"Application error: {e}")
+        raise
 
 
 if __name__ == "__main__":
