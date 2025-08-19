@@ -9,7 +9,7 @@ class QuestDBSink(BatchingSink):
         self.host = os.environ["QUESTDB_HOST"]
         self.port = int(os.environ.get("QUESTDB_PORT", 9009))
         self.token = os.environ["QUESTDB_TOKEN"]
-        self.table = os.environ["QUESTDB_TABLE"]
+        self.table = os.environ["QUESTDB_TABLE_NAME"]
 
     def setup(self):
         self.sender = qi.Sender(
