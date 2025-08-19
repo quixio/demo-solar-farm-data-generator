@@ -1,4 +1,4 @@
 quixstreams==3.22.0
 python-dotenv
-questdb[dataframe]
-requests
+questdb>=3.0.0
+requests>=2.31.0
