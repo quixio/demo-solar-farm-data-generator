@@ -8,12 +8,16 @@ import os
 import json
 import io
 import time
+import logging
 import pandas as pd
 from google.cloud import storage
 from google.oauth2 import service_account
 from quixstreams import Application
 from quixstreams.sources.base import Source
 from typing import Optional
+
+# Create module-level logger following QuixStreams pattern
+logger = logging.getLogger(__name__)
 
 
 class GCPStorageCSVSource(Source):
@@ -73,11 +77,11 @@ class GCPStorageCSVSource(Source):
                 scopes=['https://www.googleapis.com/auth/cloud-platform']
             )
 
-            self._logger.info("GCP credentials loaded successfully")
+            logger.info("GCP credentials loaded successfully")
             return credentials
 
         except Exception as e:
-            self._logger.error(f"Failed to load GCP credentials: {e}")
+            logger.error(f"Failed to load GCP credentials: {e}")
             raise
 
     def setup(self):
@@ -88,47 +92,47 @@ class GCPStorageCSVSource(Source):
             self.client = storage.Client(credentials=credentials)
 
             # Test bucket access
-            self._logger.info(f"Testing access to bucket: {self.bucket_name}")
+            logger.info(f"Testing access to bucket: {self.bucket_name}")
             self.bucket = self.client.bucket(self.bucket_name)
             self.bucket.reload()  # This will raise an exception if bucket doesn't exist or no access
-            self._logger.info("Successfully connected to GCP Storage bucket")
+            logger.info("Successfully connected to GCP Storage bucket")
 
             # Test file access
-            self._logger.info(f"Testing file access: {self.csv_file_path}")
+            logger.info(f"Testing file access: {self.csv_file_path}")
             blob = self.bucket.blob(self.csv_file_path)
             if not blob.exists():
                 raise FileNotFoundError(f"CSV file '{self.csv_file_path}' not found in bucket '{self.bucket_name}'")
-            self._logger.info("CSV file found in bucket")
+            logger.info("CSV file found in bucket")
 
             # Log file metadata
             blob.reload()
             size = blob.size if blob.size is not None else 0
-            self._logger.info(f"File size: {size:,} bytes")
+            logger.info(f"File size: {size:,} bytes")
 
         except Exception as e:
-            self._logger.error(f"Setup failed: {e}")
+            logger.error(f"Setup failed: {e}")
             raise
 
     def run(self):
         """Read CSV data from GCP Storage and produce to Kafka topic."""
         try:
-            self._logger.info("Starting GCP CSV source...")
+            logger.info("Starting GCP CSV source...")
             
             # Get the blob and download content
             blob = self.bucket.blob(self.csv_file_path)
-            self._logger.info(f"Downloading CSV file: {self.csv_file_path}")
+            logger.info(f"Downloading CSV file: {self.csv_file_path}")
             
             csv_content = blob.download_as_bytes()
             csv_string = csv_content.decode('utf-8')
             df = pd.read_csv(io.StringIO(csv_string))
             
-            self._logger.info(f"CSV loaded: {len(df)} rows, {len(df.columns)} columns")
-            self._logger.info(f"Columns: {list(df.columns)}")
+            logger.info(f"CSV loaded: {len(df)} rows, {len(df.columns)} columns")
+            logger.info(f"Columns: {list(df.columns)}")
 
             # Process each row
             for index, row in df.iterrows():
                 if not self.running:
-                    self._logger.info("Source stopping...")
+                    logger.info("Source stopping...")
                     break
 
                 try:
@@ -156,20 +160,20 @@ class GCPStorageCSVSource(Source):
                     self.produce(key=serialized.key, value=serialized.value)
 
                     if index % 100 == 0:  # Log every 100 records
-                        self._logger.info(f"Produced {index + 1} records...")
+                        logger.info(f"Produced {index + 1} records...")
 
                     # Add delay to prevent overwhelming downstream systems
                     if self.row_delay > 0:
                         time.sleep(self.row_delay)
 
                 except Exception as e:
-                    self._logger.error(f"Error processing row {index}: {e}")
+                    logger.error(f"Error processing row {index}: {e}")
                     continue
 
-            self._logger.info(f"Finished processing {len(df)} records from GCP Storage CSV")
+            logger.info(f"Finished processing {len(df)} records from GCP Storage CSV")
 
         except Exception as e:
-            self._logger.error(f"Error in run method: {e}")
+            logger.error(f"Error in run method: {e}")
             raise
 
 
