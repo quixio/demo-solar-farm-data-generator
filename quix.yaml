@@ -183,3 +183,6 @@ topics:
       partitions: 1
   - name: special-data
   - name: transform
+  - name: gcp-ou-tput
+    configuration:
+      partitions: 1
