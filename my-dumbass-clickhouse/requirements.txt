@@ -1,3 +1,0 @@
-quixstreams==3.22.0
-python-dotenv==1.0.1
-clickhouse-connect==0.8.2
