@@ -16,9 +16,12 @@ from questdb.ingress import Sender, TimestampNanos
 # from dotenv import load_dotenv
 # load_dotenv()
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# Set up logging  
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Enable debug logging for this specific logger
+logger.setLevel(logging.DEBUG)
 
 
 class QuestDBSolarSink(BatchingSink):
@@ -42,13 +45,16 @@ class QuestDBSolarSink(BatchingSink):
         try:
             self.port = int(os.environ.get("QUESTDB_PORT", "9000"))
         except ValueError:
+            logger.warning(f"Invalid QUESTDB_PORT value: {os.environ.get('QUESTDB_PORT')}, using default 9000")
             self.port = 9000
             
         self.token = os.environ.get("QUESTDB_TOKEN")
         self.table_name = os.environ.get("QUESTDB_TABLE_NAME", "solar_panel_data")
         
-        # Build configuration string
-        self.config_string = f"http::addr={self.host}:{self.port};"
+        logger.info(f"Environment variables - HOST: {self.host}, PORT: {self.port}, TOKEN: {'SET' if self.token else 'NOT SET'}, TABLE: {self.table_name}")
+        
+        # Build configuration string with timeout settings
+        self.config_string = f"http::addr={self.host}:{self.port};request_timeout=30000;"
         if self.token:
             self.config_string += f"token={self.token};"
         
@@ -59,9 +65,24 @@ class QuestDBSolarSink(BatchingSink):
         """Test connection to QuestDB and create table if needed"""
         logger.info("Setting up QuestDB connection...")
         try:
+            # First test REST API endpoint
+            test_url = f"http://{self.host}:{self.port}/exec"
+            headers = {}
+            if self.token:
+                headers["Authorization"] = f"Bearer {self.token}"
+            
+            test_response = requests.post(
+                test_url,
+                headers=headers,
+                data={"query": "SELECT 1;"},
+                timeout=10
+            )
+            logger.info(f"REST API test response: {test_response.status_code}")
+            
+            # Test ILP connection
             with Sender.from_conf(self.config_string) as sender:
                 # Test connection by attempting to send a test row
-                logger.info("QuestDB connection test successful")
+                logger.info("QuestDB ILP connection test successful")
                 
                 # Create table schema if it doesn't exist - use REST API for DDL
                 self._ensure_table_exists()
@@ -71,6 +92,7 @@ class QuestDBSolarSink(BatchingSink):
                     
         except Exception as e:
             logger.error(f"Failed to connect to QuestDB: {e}")
+            logger.error(f"Connection config: {self.config_string.replace(self.token or 'TOKEN', 'XXXX') if self.token else self.config_string}")
             if self.on_client_connect_failure:
                 self.on_client_connect_failure()
             raise ConnectionError(f"Could not connect to QuestDB: {e}")
@@ -113,7 +135,8 @@ class QuestDBSolarSink(BatchingSink):
             response = requests.post(
                 url, 
                 headers=headers,
-                data={"query": create_table_sql}
+                data={"query": create_table_sql},
+                timeout=30
             )
             
             if response.status_code == 200:
@@ -140,7 +163,8 @@ class QuestDBSolarSink(BatchingSink):
             response = requests.post(
                 url, 
                 headers=headers,
-                data={"query": query}
+                data={"query": query},
+                timeout=30
             )
             
             if response.status_code == 200:
@@ -160,15 +184,18 @@ class QuestDBSolarSink(BatchingSink):
     def _parse_solar_data(self, message):
         """Parse solar panel data from the nested message structure"""
         try:
-            # Debug: Print raw message structure
-            print(f"Raw message: {message}")
+            # Debug: Log raw message structure (truncated for readability)
+            logger.debug(f"Raw message type: {type(message)} - Content: {str(message)[:500]}...")
             
             # Extract the nested value field which contains JSON string
             if isinstance(message, dict) and 'value' in message:
                 value_str = message.get('value', '{}')
+                logger.debug(f"Value field type: {type(value_str)} - Content: {str(value_str)[:200]}...")
+                
                 if isinstance(value_str, str):
                     # Parse the JSON string to get the actual solar data
                     solar_data = json.loads(value_str)
+                    logger.debug(f"Parsed solar data keys: {list(solar_data.keys()) if isinstance(solar_data, dict) else 'Not a dict'}")
                 else:
                     solar_data = value_str
                 
@@ -180,7 +207,8 @@ class QuestDBSolarSink(BatchingSink):
                     try:
                         dt = datetime.fromisoformat(message_datetime.replace('Z', '+00:00'))
                         message_ts = int(dt.timestamp() * 1000000000)  # Convert to nanoseconds
-                    except:
+                    except Exception as dt_e:
+                        logger.warning(f"Failed to parse datetime '{message_datetime}': {dt_e}")
                         message_ts = TimestampNanos.now()
                 else:
                     message_ts = TimestampNanos.now()
@@ -189,34 +217,47 @@ class QuestDBSolarSink(BatchingSink):
                 solar_data['message_datetime'] = message_datetime
                 solar_data['message_ts'] = message_ts
                 
+                logger.debug(f"Successfully parsed solar data for panel: {solar_data.get('panel_id', 'UNKNOWN')}")
                 return solar_data
             else:
-                logger.warning(f"Unexpected message structure: {message}")
+                logger.warning(f"Unexpected message structure - expected dict with 'value' key: {type(message)} - {message}")
                 return None
                 
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from value field: {e}")
+            logger.error(f"Failed to parse JSON from value field '{value_str[:100]}...': {e}")
             return None
         except Exception as e:
-            logger.error(f"Error parsing solar data: {e}")
+            logger.error(f"Error parsing solar data: {e}", exc_info=True)
             return None
 
     def write(self, batch: SinkBatch):
         """Write batch of solar panel data to QuestDB"""
         attempts_remaining = 3
         
+        # Try to ensure table exists if setup failed initially
+        try:
+            self._ensure_table_exists()
+        except Exception as e:
+            logger.warning(f"Could not ensure table exists: {e}")
+        
         # Parse all messages in the batch
         parsed_data = []
-        for item in batch:
+        logger.info(f"Processing batch with {len(batch)} items")
+        
+        for i, item in enumerate(batch):
+            logger.debug(f"Processing item {i}: {type(item.value)} - {str(item.value)[:200]}...")
             solar_data = self._parse_solar_data(item.value)
             if solar_data:
                 parsed_data.append(solar_data)
+            else:
+                logger.warning(f"Failed to parse solar data from item {i}")
         
         if not parsed_data:
             logger.warning("No valid solar data found in batch")
             return
             
         logger.info(f"Writing batch of {len(parsed_data)} solar panel records to QuestDB")
+        logger.debug(f"Sample parsed data: {parsed_data[0] if parsed_data else 'None'}")
         
         while attempts_remaining > 0:
             try:
@@ -268,22 +309,26 @@ class QuestDBSolarSink(BatchingSink):
                 return
                 
             except ConnectionError as e:
-                logger.warning(f"Connection error writing to QuestDB: {e}")
+                logger.warning(f"Connection error writing to QuestDB (attempt {4-attempts_remaining}): {e}")
                 attempts_remaining -= 1
                 if attempts_remaining > 0:
+                    logger.info(f"Retrying in 3 seconds... ({attempts_remaining} attempts remaining)")
                     time.sleep(3)
-            except TimeoutError:
-                logger.warning("Timeout writing to QuestDB, using backpressure")
-                raise SinkBackpressureError(
-                    retry_after=30.0,
-                    topic=batch.topic,
-                    partition=batch.partition,
-                )
             except Exception as e:
-                logger.error(f"Unexpected error writing to QuestDB: {e}")
-                attempts_remaining -= 1
-                if attempts_remaining > 0:
-                    time.sleep(3)
+                # Check if it's a timeout-like error
+                if "timeout" in str(e).lower() or "time out" in str(e).lower():
+                    logger.warning("Timeout writing to QuestDB, using backpressure")
+                    raise SinkBackpressureError(
+                        retry_after=30.0,
+                        topic=batch.topic,
+                        partition=batch.partition,
+                    )
+                else:
+                    logger.error(f"Unexpected error writing to QuestDB (attempt {4-attempts_remaining}): {e}")
+                    attempts_remaining -= 1
+                    if attempts_remaining > 0:
+                        logger.info(f"Retrying in 3 seconds... ({attempts_remaining} attempts remaining)")
+                        time.sleep(3)
                     
         raise Exception(f"Failed to write batch to QuestDB after 3 attempts")
 
@@ -300,7 +345,13 @@ def main():
     
     # Initialize QuestDB sink and setup connection
     questdb_sink = QuestDBSolarSink()
-    questdb_sink.setup()  # Explicitly call setup to ensure connection and table exist
+    
+    # Try to setup connection, but continue if it fails - let the actual writes handle connection issues
+    try:
+        questdb_sink.setup()  # Explicitly call setup to ensure connection and table exist
+    except Exception as e:
+        logger.warning(f"Initial setup failed, but continuing with application startup: {e}")
+        logger.info("Will attempt connection on first write operation...")
     
     # Define input topic
     input_topic = app.topic(name=os.environ["input"])
