@@ -1,10 +1,31 @@
 name: questdb-lies
 language: python
 variables:
-  - name: input
-    inputType: InputTopic
-    description: Name of the input topic to listen to.
-    defaultValue: transform
+- name: input
+  inputType: InputTopic
+  description: Name of the input topic to listen to.
+  defaultValue: solar-data
+- name: QUESTDB_HOST
+  inputType: FreeText
+  description: QuestDB host address
+  defaultValue: questdb
+- name: QUESTDB_PORT
+  inputType: FreeText
+  description: QuestDB HTTP port
+  defaultValue: '9000'
+- name: QUESTDB_TOKEN
+  inputType: Secret
+  description: QuestDB authentication token
+  required: false
+  defaultValue: QUESTDB_PW
+- name: QUESTDB_TABLE_NAME
+  inputType: FreeText
+  description: Table name for solar panel data
+  defaultValue: solar_panel_data
+- name: CONSUMER_GROUP_NAME
+  inputType: FreeText
+  description: Kafka consumer group name
+  defaultValue: questdb_solar_sink
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
