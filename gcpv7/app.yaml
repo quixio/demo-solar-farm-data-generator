@@ -6,6 +6,12 @@ variables:
     description: Name of the output topic to write into
     defaultValue: csv-data
     required: true
+  - name: GCP_BUCKET_NAME
+    inputType: FreeText
+  - name: GCP_SERVICE_ACCOUNT_KEY
+    inputType: FreeText
+  - name: CSV_FILE_PATH
+    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
