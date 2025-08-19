@@ -8,10 +8,13 @@ variables:
     required: true
   - name: CSV_FILE_PATH
     inputType: FreeText
+    defaultValue: 3d_printer_data_anomalies.csv
   - name: GCP_SERVICE_ACCOUNT_KEY
     inputType: FreeText
+    defaultValue: GCLOUD_PK_JSON
   - name: GCP_BUCKET_NAME
     inputType: FreeText
+    defaultValue: quix-worklfow
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
