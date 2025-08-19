@@ -144,6 +144,8 @@ deployments:
           targetPort: 9000
         - port: 8812
           targetPort: 8812
+        - port: 9000
+          targetPort: 9000
   - name: Clickhouse Test Server
     application: clickhouse-test-server
     version: latest
