@@ -10,7 +10,8 @@ variables:
     inputType: FreeText
     defaultValue: 3d_printer_data_anomalies.csv
   - name: GCP_SERVICE_ACCOUNT_KEY
-    inputType: FreeText
+    inputType: Secret
+    multiline: false
     defaultValue: GCLOUD_PK_JSON
   - name: CSV_FILE_PATH
     inputType: FreeText
