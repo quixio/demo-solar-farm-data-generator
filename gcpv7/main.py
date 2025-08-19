@@ -1,87 +1,175 @@
-# import the Quix Streams modules for interacting with Kafka.
-# For general info, see https://quix.io/docs/quix-streams/introduction.html
-# For sources, see https://quix.io/docs/quix-streams/connectors/sources/index.html
-from quixstreams import Application
-from quixstreams.sources import Source
+"""
+GCP Storage CSV Connection Test
+===============================
+This script tests the connection to Google Cloud Storage and reads sample data from a CSV file.
+This is a connection test only - no Kafka/Quix Streams integration yet.
+"""
 
 import os
+import json
+import io
+import pandas as pd
+from google.cloud import storage
+from google.oauth2 import service_account
 
-# for local dev, you can load env vars from a .env file
-# from dotenv import load_dotenv
-# load_dotenv()
-
-
-class MemoryUsageGenerator(Source):
+def load_gcp_credentials():
     """
-    A Quix Streams Source enables Applications to read data from something other
-    than Kafka and publish it to a desired Kafka topic.
-
-    You provide a Source to an Application, which will handle the Source's lifecycle.
-
-    In this case, we have built a new Source that reads from a static set of
-    already loaded json data representing a server's memory usage over time.
-
-    There are numerous pre-built sources available to use out of the box; see:
-    https://quix.io/docs/quix-streams/connectors/sources/index.html
+    Load GCP service account credentials from environment variable.
+    Returns the credentials object for authenticating with Google Cloud Storage.
     """
+    try:
+        # Get the JSON credentials from environment variable
+        credentials_json = os.environ.get('GCP_SERVICE_ACCOUNT_KEY')
+        if not credentials_json:
+            raise ValueError("GCP_SERVICE_ACCOUNT_KEY environment variable is not set")
+        
+        # Parse JSON credentials
+        credentials_info = json.loads(credentials_json)
+        
+        # Create credentials object
+        credentials = service_account.Credentials.from_service_account_info(
+            credentials_info,
+            scopes=['https://www.googleapis.com/auth/cloud-platform']
+        )
+        
+        print("✓ GCP credentials loaded successfully")
+        return credentials
+        
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in GCP_SERVICE_ACCOUNT_KEY: {e}")
+    except Exception as e:
+        raise ValueError(f"Failed to load GCP credentials: {e}")
 
-    memory_allocation_data = [
-        {"m": "mem", "host": "host1", "used_percent": 64.56, "time": 1577836800000000000},
-        {"m": "mem", "host": "host2", "used_percent": 71.89, "time": 1577836801000000000},
-        {"m": "mem", "host": "host1", "used_percent": 63.27, "time": 1577836803000000000},
-        {"m": "mem", "host": "host2", "used_percent": 73.45, "time": 1577836804000000000},
-        {"m": "mem", "host": "host1", "used_percent": 62.98, "time": 1577836806000000000},
-        {"m": "mem", "host": "host2", "used_percent": 74.33, "time": 1577836808000000000},
-        {"m": "mem", "host": "host1", "used_percent": 65.21, "time": 1577836810000000000},
-    ]
-
-    def run(self):
-        """
-        Each Source must have a `run` method.
-
-        It will include the logic behind your source, contained within a
-        "while self.running" block for exiting when its parent Application stops.
-
-        There a few methods on a Source available for producing to Kafka, like
-        `self.serialize` and `self.produce`.
-        """
-        data = iter(self.memory_allocation_data)
-        # either break when the app is stopped, or data is exhausted
-        while self.running:
-            try:
-                event = next(data)
-                event_serialized = self.serialize(key=event["host"], value=event)
-                self.produce(key=event_serialized.key, value=event_serialized.value)
-                print("Source produced event successfully!")
-            except StopIteration:
-                print("Source finished producing messages.")
-                return
-
+def test_gcp_storage_connection():
+    """
+    Test connection to Google Cloud Storage and read sample CSV data.
+    """
+    try:
+        print("=" * 50)
+        print("GCP Storage CSV Connection Test")
+        print("=" * 50)
+        
+        # Load environment variables
+        bucket_name = os.environ.get('GCP_BUCKET_NAME')
+        csv_file_path = os.environ.get('CSV_FILE_PATH')
+        
+        if not bucket_name:
+            raise ValueError("GCP_BUCKET_NAME environment variable is not set")
+        if not csv_file_path:
+            raise ValueError("CSV_FILE_PATH environment variable is not set")
+            
+        print(f"Bucket: {bucket_name}")
+        print(f"CSV File: {csv_file_path}")
+        print()
+        
+        # Load credentials and create client
+        credentials = load_gcp_credentials()
+        client = storage.Client(credentials=credentials)
+        
+        # Test bucket access
+        print("Testing bucket access...")
+        try:
+            bucket = client.bucket(bucket_name)
+            bucket.reload()  # This will raise an exception if bucket doesn't exist or no access
+            print("✓ Successfully connected to GCP Storage bucket")
+        except Exception as e:
+            raise Exception(f"Failed to access bucket '{bucket_name}': {e}")
+        
+        # Test file access
+        print(f"Testing file access: {csv_file_path}")
+        try:
+            blob = bucket.blob(csv_file_path)
+            if not blob.exists():
+                raise FileNotFoundError(f"CSV file '{csv_file_path}' not found in bucket '{bucket_name}'")
+            print("✓ CSV file found in bucket")
+        except Exception as e:
+            raise Exception(f"Failed to access file '{csv_file_path}': {e}")
+        
+        # Get file metadata
+        print("\nFile Metadata:")
+        print(f"  Size: {blob.size:,} bytes")
+        print(f"  Content Type: {blob.content_type}")
+        print(f"  Last Modified: {blob.updated}")
+        
+        # Read and parse CSV data
+        print("\nReading CSV data...")
+        try:
+            # Download file content as bytes
+            csv_content = blob.download_as_bytes()
+            
+            # Convert bytes to string and read with pandas
+            csv_string = csv_content.decode('utf-8')
+            df = pd.read_csv(io.StringIO(csv_string))
+            
+            print("✓ CSV data loaded successfully")
+            print(f"  Total rows: {len(df):,}")
+            print(f"  Total columns: {len(df.columns)}")
+            print(f"  Column names: {list(df.columns)}")
+            
+        except Exception as e:
+            raise Exception(f"Failed to read CSV data: {e}")
+        
+        # Display sample data (first 10 records)
+        print("\n" + "=" * 50)
+        print("SAMPLE DATA (First 10 records)")
+        print("=" * 50)
+        
+        sample_size = min(10, len(df))
+        for i in range(sample_size):
+            row = df.iloc[i]
+            print(f"\nRecord {i + 1}:")
+            for col in df.columns:
+                value = row[col]
+                # Format the output nicely
+                if pd.isna(value):
+                    formatted_value = "null"
+                elif isinstance(value, float):
+                    formatted_value = f"{value:.6f}" if value != int(value) else str(int(value))
+                else:
+                    formatted_value = str(value)
+                print(f"  {col}: {formatted_value}")
+        
+        print("\n" + "=" * 50)
+        print("CONNECTION TEST SUMMARY")
+        print("=" * 50)
+        print("✓ GCP credentials authentication: SUCCESS")
+        print("✓ Bucket access: SUCCESS")
+        print("✓ File access: SUCCESS")
+        print("✓ CSV data parsing: SUCCESS")
+        print(f"✓ Sample data retrieved: {sample_size} records")
+        print()
+        print("Connection test completed successfully!")
+        print("Ready for Quix Streams integration.")
+        
+        return True
+        
+    except Exception as e:
+        print(f"\n❌ Connection test failed: {e}")
+        print("\nTroubleshooting tips:")
+        print("1. Verify GCP_SERVICE_ACCOUNT_KEY contains valid JSON credentials")
+        print("2. Ensure the service account has Storage Object Viewer permissions")
+        print("3. Check that GCP_BUCKET_NAME is correct and accessible")
+        print("4. Verify CSV_FILE_PATH points to an existing file in the bucket")
+        print("5. Confirm the CSV file is properly formatted")
+        return False
 
 def main():
-    """ Here we will set up our Application. """
+    """
+    Main function to run the GCP Storage connection test.
+    """
+    try:
+        # Test connection
+        success = test_gcp_storage_connection()
+        
+        if success:
+            print("\n🎉 All tests passed! GCP Storage connection is working properly.")
+        else:
+            print("\n💥 Tests failed. Please check your configuration.")
+            
+    except KeyboardInterrupt:
+        print("\n\nTest interrupted by user.")
+    except Exception as e:
+        print(f"\n💥 Unexpected error: {e}")
 
-    # Setup necessary objects
-    app = Application(consumer_group="data_producer", auto_create_topics=True)
-    memory_usage_source = MemoryUsageGenerator(name="memory-usage-producer")
-    output_topic = app.topic(name=os.environ["output"])
-
-    # --- Setup Source ---
-    # OPTION 1: no additional processing with a StreamingDataFrame
-    # Generally the recommended approach; no additional operations needed!
-    app.add_source(source=memory_usage_source, topic=output_topic)
-
-    # OPTION 2: additional processing with a StreamingDataFrame
-    # Useful for consolidating additional data cleanup into 1 Application.
-    # In this case, do NOT use `app.add_source()`.
-    # sdf = app.dataframe(source=source)
-    # <sdf operations here>
-    # sdf.to_topic(topic=output_topic) # you must do this to output your data!
-
-    # With our pipeline defined, now run the Application
-    app.run()
-
-
-#  Sources require execution under a conditional main
 if __name__ == "__main__":
     main()
