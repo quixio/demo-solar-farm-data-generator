@@ -1,212 +1,241 @@
 """
-GCP Storage CSV Connection Test
-===============================
-This script tests the connection to Google Cloud Storage and reads sample data from a CSV file.
-This is a connection test only - no Kafka/Quix Streams integration yet.
+GCP Storage CSV Source
+=====================
+Quix Streams source that reads CSV data from Google Cloud Storage and publishes to a Kafka topic.
 """
 
 import os
 import json
 import io
+import time
 import pandas as pd
 from google.cloud import storage
 from google.oauth2 import service_account
+from quixstreams import Application
+from quixstreams.sources.base import Source
+from typing import Optional
 
-def load_gcp_credentials():
-    """
-    Load GCP service account credentials from environment variable.
-    Returns the credentials object for authenticating with Google Cloud Storage.
-    """
-    try:
-        # Get the JSON credentials from environment variable
-        credentials_json = os.environ.get('GCP_SERVICE_ACCOUNT_KEY')
-        if not credentials_json:
-            raise ValueError("GCP_SERVICE_ACCOUNT_KEY environment variable is not set")
-        
-        if not credentials_json.strip():
-            raise ValueError("GCP_SERVICE_ACCOUNT_KEY environment variable is empty")
-        
-        # Parse JSON credentials
-        try:
-            credentials_info = json.loads(credentials_json)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in GCP_SERVICE_ACCOUNT_KEY: {e}. Please ensure the JSON is properly formatted.")
-        
-        # Validate required fields in service account JSON
-        required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
-        missing_fields = [field for field in required_fields if field not in credentials_info]
-        if missing_fields:
-            raise ValueError(f"Service account JSON missing required fields: {', '.join(missing_fields)}")
-        
-        # Create credentials object
-        credentials = service_account.Credentials.from_service_account_info(
-            credentials_info,
-            scopes=['https://www.googleapis.com/auth/cloud-platform']
-        )
-        
-        print("✓ GCP credentials loaded successfully")
-        return credentials
-        
-    except ValueError:
-        # Re-raise ValueError as is
-        raise
-    except Exception as e:
-        raise ValueError(f"Failed to load GCP credentials: {e}")
 
-def test_gcp_storage_connection():
+class GCPStorageCSVSource(Source):
     """
-    Test connection to Google Cloud Storage and read sample CSV data.
+    A Quix Streams source that reads CSV data from Google Cloud Storage.
     """
-    try:
-        print("=" * 50)
-        print("GCP Storage CSV Connection Test")
-        print("=" * 50)
-        
-        # Load environment variables
-        bucket_name = os.environ.get('GCP_BUCKET_NAME')
-        csv_file_path = os.environ.get('CSV_FILE_PATH')
-        
-        if not bucket_name:
-            raise ValueError("GCP_BUCKET_NAME environment variable is not set")
-        if not csv_file_path:
-            raise ValueError("CSV_FILE_PATH environment variable is not set")
-            
-        print(f"Bucket: {bucket_name}")
-        print(f"CSV File: {csv_file_path}")
-        print()
-        
-        # Load credentials and create client
-        credentials = load_gcp_credentials()
-        client = storage.Client(credentials=credentials)
-        
-        # Test bucket access
-        print("Testing bucket access...")
+
+    def __init__(
+        self,
+        bucket_name: str,
+        csv_file_path: str,
+        credentials_json: str,
+        name: str = "gcp-csv-source",
+        shutdown_timeout: float = 10.0,
+        row_delay: float = 0.1,
+    ):
+        """
+        Initialize the GCP Storage CSV Source.
+
+        Args:
+            bucket_name: Name of the GCP Storage bucket
+            csv_file_path: Path to the CSV file within the bucket
+            credentials_json: GCP service account JSON credentials as string
+            name: Source name
+            shutdown_timeout: Timeout for source shutdown
+            row_delay: Delay between rows (to prevent overwhelming downstream systems)
+        """
+        super().__init__(name=name, shutdown_timeout=shutdown_timeout)
+        self.bucket_name = bucket_name
+        self.csv_file_path = csv_file_path
+        self.credentials_json = credentials_json
+        self.row_delay = row_delay
+        self.client: Optional[storage.Client] = None
+        self.bucket: Optional[storage.Bucket] = None
+
+    def _load_gcp_credentials(self):
+        """Load and validate GCP credentials."""
         try:
-            bucket = client.bucket(bucket_name)
-            bucket.reload()  # This will raise an exception if bucket doesn't exist or no access
-            print("✓ Successfully connected to GCP Storage bucket")
+            if not self.credentials_json or not self.credentials_json.strip():
+                raise ValueError("GCP credentials are empty")
+
+            # Parse JSON credentials
+            try:
+                credentials_info = json.loads(self.credentials_json)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON in GCP credentials: {e}")
+
+            # Validate required fields
+            required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
+            missing_fields = [field for field in required_fields if field not in credentials_info]
+            if missing_fields:
+                raise ValueError(f"Service account JSON missing required fields: {', '.join(missing_fields)}")
+
+            # Create credentials object
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_info,
+                scopes=['https://www.googleapis.com/auth/cloud-platform']
+            )
+
+            self._logger.info("GCP credentials loaded successfully")
+            return credentials
+
         except Exception as e:
-            raise Exception(f"Failed to access bucket '{bucket_name}': {e}")
-        
-        # Test file access
-        print(f"Testing file access: {csv_file_path}")
+            self._logger.error(f"Failed to load GCP credentials: {e}")
+            raise
+
+    def setup(self):
+        """Set up the GCP Storage client and validate access."""
         try:
-            blob = bucket.blob(csv_file_path)
+            # Load credentials and create client
+            credentials = self._load_gcp_credentials()
+            self.client = storage.Client(credentials=credentials)
+
+            # Test bucket access
+            self._logger.info(f"Testing access to bucket: {self.bucket_name}")
+            self.bucket = self.client.bucket(self.bucket_name)
+            self.bucket.reload()  # This will raise an exception if bucket doesn't exist or no access
+            self._logger.info("Successfully connected to GCP Storage bucket")
+
+            # Test file access
+            self._logger.info(f"Testing file access: {self.csv_file_path}")
+            blob = self.bucket.blob(self.csv_file_path)
             if not blob.exists():
-                raise FileNotFoundError(f"CSV file '{csv_file_path}' not found in bucket '{bucket_name}'")
-            print("✓ CSV file found in bucket")
-        except Exception as e:
-            raise Exception(f"Failed to access file '{csv_file_path}': {e}")
-        
-        # Get file metadata
-        print("\nFile Metadata:")
-        try:
-            # Reload blob to ensure we have all metadata
+                raise FileNotFoundError(f"CSV file '{self.csv_file_path}' not found in bucket '{self.bucket_name}'")
+            self._logger.info("CSV file found in bucket")
+
+            # Log file metadata
             blob.reload()
-            
-            # Safe formatting with None checks
             size = blob.size if blob.size is not None else 0
-            content_type = blob.content_type if blob.content_type is not None else "Unknown"
-            updated = blob.updated if blob.updated is not None else "Unknown"
-            
-            print(f"  Size: {size:,} bytes")
-            print(f"  Content Type: {content_type}")
-            print(f"  Last Modified: {updated}")
+            self._logger.info(f"File size: {size:,} bytes")
+
         except Exception as e:
-            print(f"  Warning: Could not retrieve metadata: {e}")
-            print(f"  Size: Unknown")
-            print(f"  Content Type: Unknown")
-            print(f"  Last Modified: Unknown")
-        
-        # Read and parse CSV data
-        print("\nReading CSV data...")
+            self._logger.error(f"Setup failed: {e}")
+            raise
+
+    def run(self):
+        """Read CSV data from GCP Storage and produce to Kafka topic."""
         try:
-            # Download file content as bytes
-            csv_content = blob.download_as_bytes()
+            self._logger.info("Starting GCP CSV source...")
             
-            # Convert bytes to string and read with pandas
+            # Get the blob and download content
+            blob = self.bucket.blob(self.csv_file_path)
+            self._logger.info(f"Downloading CSV file: {self.csv_file_path}")
+            
+            csv_content = blob.download_as_bytes()
             csv_string = csv_content.decode('utf-8')
             df = pd.read_csv(io.StringIO(csv_string))
             
-            print("✓ CSV data loaded successfully")
-            print(f"  Total rows: {len(df):,}")
-            print(f"  Total columns: {len(df.columns)}")
-            print(f"  Column names: {list(df.columns)}")
-            
+            self._logger.info(f"CSV loaded: {len(df)} rows, {len(df.columns)} columns")
+            self._logger.info(f"Columns: {list(df.columns)}")
+
+            # Process each row
+            for index, row in df.iterrows():
+                if not self.running:
+                    self._logger.info("Source stopping...")
+                    break
+
+                try:
+                    # Convert row to dictionary and handle NaN values
+                    row_dict = row.to_dict()
+                    
+                    # Convert pandas NaN values to None (which will serialize as null in JSON)
+                    for key, value in row_dict.items():
+                        if pd.isna(value):
+                            row_dict[key] = None
+
+                    # Create a unique key for each row (using index)
+                    message_key = f"row_{index}"
+                    
+                    # Add metadata
+                    message = {
+                        "data": row_dict,
+                        "source_file": self.csv_file_path,
+                        "row_number": int(index),
+                        "timestamp": time.time()
+                    }
+
+                    # Serialize and produce message
+                    serialized = self.serialize(key=message_key, value=message)
+                    self.produce(key=serialized.key, value=serialized.value)
+
+                    if index % 100 == 0:  # Log every 100 records
+                        self._logger.info(f"Produced {index + 1} records...")
+
+                    # Add delay to prevent overwhelming downstream systems
+                    if self.row_delay > 0:
+                        time.sleep(self.row_delay)
+
+                except Exception as e:
+                    self._logger.error(f"Error processing row {index}: {e}")
+                    continue
+
+            self._logger.info(f"Finished processing {len(df)} records from GCP Storage CSV")
+
         except Exception as e:
-            raise Exception(f"Failed to read CSV data: {e}")
-        
-        # Display sample data (first 10 records)
-        print("\n" + "=" * 50)
-        print("SAMPLE DATA (First 10 records)")
-        print("=" * 50)
-        
-        sample_size = min(10, len(df))
-        for i in range(sample_size):
-            try:
-                row = df.iloc[i]
-                print(f"\nRecord {i + 1}:")
-                for col in df.columns:
-                    try:
-                        value = row[col]
-                        # Format the output nicely - handle None/NaN values safely
-                        if pd.isna(value) or value is None:
-                            formatted_value = "null"
-                        elif isinstance(value, float):
-                            # Check if the float can be converted to int without losing precision
-                            try:
-                                formatted_value = f"{value:.6f}" if value != int(value) else str(int(value))
-                            except (ValueError, OverflowError):
-                                formatted_value = str(value)
-                        else:
-                            formatted_value = str(value) if value is not None else "null"
-                        print(f"  {col}: {formatted_value}")
-                    except Exception as e:
-                        print(f"  {col}: <Error formatting value: {e}>")
-            except Exception as e:
-                print(f"Error processing record {i + 1}: {e}")
-        
-        print("\n" + "=" * 50)
-        print("CONNECTION TEST SUMMARY")
-        print("=" * 50)
-        print("✓ GCP credentials authentication: SUCCESS")
-        print("✓ Bucket access: SUCCESS")
-        print("✓ File access: SUCCESS")
-        print("✓ CSV data parsing: SUCCESS")
-        print(f"✓ Sample data retrieved: {sample_size} records")
-        print()
-        print("Connection test completed successfully!")
-        print("Ready for Quix Streams integration.")
-        
-        return True
-        
-    except Exception as e:
-        print(f"\n❌ Connection test failed: {e}")
-        print("\nTroubleshooting tips:")
-        print("1. Verify GCP_SERVICE_ACCOUNT_KEY contains valid JSON credentials")
-        print("2. Ensure the service account has Storage Object Viewer permissions")
-        print("3. Check that GCP_BUCKET_NAME is correct and accessible")
-        print("4. Verify CSV_FILE_PATH points to an existing file in the bucket")
-        print("5. Confirm the CSV file is properly formatted")
-        return False
+            self._logger.error(f"Error in run method: {e}")
+            raise
+
+
+def load_env_vars():
+    """Load and validate environment variables."""
+    bucket_name = os.environ.get('GCP_BUCKET_NAME')
+    csv_file_path = os.environ.get('CSV_FILE_PATH')
+    credentials_json = os.environ.get('GCP_SERVICE_ACCOUNT_KEY')
+    output_topic = os.environ.get('output', 'gcp-output')
+
+    if not bucket_name:
+        raise ValueError("GCP_BUCKET_NAME environment variable is not set")
+    if not csv_file_path:
+        raise ValueError("CSV_FILE_PATH environment variable is not set")
+    if not credentials_json:
+        raise ValueError("GCP_SERVICE_ACCOUNT_KEY environment variable is not set")
+
+    return bucket_name, csv_file_path, credentials_json, output_topic
+
 
 def main():
-    """
-    Main function to run the GCP Storage connection test.
-    """
+    """Main function that creates and runs the Quix Streams application."""
     try:
-        # Test connection
-        success = test_gcp_storage_connection()
+        print("=" * 50)
+        print("GCP Storage CSV Source")
+        print("=" * 50)
+
+        # Load environment variables
+        bucket_name, csv_file_path, credentials_json, output_topic = load_env_vars()
+
+        print(f"Bucket: {bucket_name}")
+        print(f"CSV File: {csv_file_path}")
+        print(f"Output Topic: {output_topic}")
+        print()
+
+        # Create Quix application
+        app = Application()
+
+        # Create the GCP CSV source
+        source = GCPStorageCSVSource(
+            bucket_name=bucket_name,
+            csv_file_path=csv_file_path,
+            credentials_json=credentials_json,
+            name="gcp-csv-source",
+            row_delay=0.01  # Small delay between rows
+        )
+
+        # Create output topic
+        topic = app.topic(output_topic, value_serializer="json")
+
+        # Create streaming dataframe with the source
+        sdf = app.dataframe(topic=topic, source=source)
         
-        if success:
-            print("\n🎉 All tests passed! GCP Storage connection is working properly.")
-        else:
-            print("\n💥 Tests failed. Please check your configuration.")
-            
+        # Log the messages being produced (optional, for debugging)
+        sdf.print(metadata=True)
+
+        # Run with limits for testing (remove these for production)
+        print("Starting Quix application...")
+        app.run(count=100, timeout=60)  # Process up to 100 messages or timeout after 60 seconds
+
     except KeyboardInterrupt:
-        print("\n\nTest interrupted by user.")
+        print("\nApplication interrupted by user")
     except Exception as e:
-        print(f"\n💥 Unexpected error: {e}")
+        print(f"Application error: {e}")
+        raise
+
 
 if __name__ == "__main__":
     main()
