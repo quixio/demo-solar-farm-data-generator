@@ -12,7 +12,7 @@ variables:
 - name: QUESTDB_PORT
   inputType: FreeText
   description: QuestDB HTTP port
-  defaultValue: '9000'
+  defaultValue: '8812'
 - name: QUESTDB_TOKEN
   inputType: Secret
   description: QuestDB authentication token
