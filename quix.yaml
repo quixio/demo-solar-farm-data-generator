@@ -186,3 +186,6 @@ topics:
   - name: gcp-ou-tput
     configuration:
       partitions: 1
+  - name: gcp-output
+    configuration:
+      partitions: 1
