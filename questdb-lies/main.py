@@ -28,7 +28,7 @@ class QuestDBSink(BatchingSink):
             self.sender.send(line)
 
 app = Application()
-topic = app.topic(os.environ["INPUT_TOPIC"])
+topic = app.topic(os.environ["input"])
 sdf = app.dataframe(topic)
 questdb_sink = QuestDBSink()
 sdf.sink(questdb_sink)
