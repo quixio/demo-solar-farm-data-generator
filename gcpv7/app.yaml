@@ -4,14 +4,17 @@ variables:
   - name: output
     inputType: OutputTopic
     description: Name of the output topic to write into
-    defaultValue: csv-data
+    defaultValue: gcp-output
     required: true
   - name: GCP_BUCKET_NAME
     inputType: FreeText
+    defaultValue: 3d_printer_data_anomalies.csv
   - name: GCP_SERVICE_ACCOUNT_KEY
     inputType: FreeText
+    defaultValue: GCLOUD_PK_JSON
   - name: CSV_FILE_PATH
     inputType: FreeText
+    defaultValue: 3d_printer_data_anomalies.csv
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
