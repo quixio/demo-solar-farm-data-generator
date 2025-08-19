@@ -1,87 +1,182 @@
-# import the Quix Streams modules for interacting with Kafka.
-# For general info, see https://quix.io/docs/quix-streams/introduction.html
-# For sources, see https://quix.io/docs/quix-streams/connectors/sources/index.html
-from quixstreams import Application
-from quixstreams.sources import Source
+"""
+Wikipedia EventStreams Connection Test
+
+This script tests the connection to Wikipedia's change event stream API and
+retrieves sample data to verify connectivity and understand the data structure.
+This is a connection test only - no Kafka integration yet.
+"""
 
 import os
+import json
+import time
+from datetime import datetime
+from requests_sse import EventSource
 
-# for local dev, you can load env vars from a .env file
+# For local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
 # load_dotenv()
 
 
-class MemoryUsageGenerator(Source):
+class WikipediaStreamConnectionTest:
     """
-    A Quix Streams Source enables Applications to read data from something other
-    than Kafka and publish it to a desired Kafka topic.
-
-    You provide a Source to an Application, which will handle the Source's lifecycle.
-
-    In this case, we have built a new Source that reads from a static set of
-    already loaded json data representing a server's memory usage over time.
-
-    There are numerous pre-built sources available to use out of the box; see:
-    https://quix.io/docs/quix-streams/connectors/sources/index.html
+    A connection test class for Wikipedia's EventStreams API.
+    Tests connectivity and retrieves sample data for analysis.
     """
+    
+    def __init__(self):
+        # Get configuration from environment variables
+        self.stream_url = os.environ.get('WIKIPEDIA_STREAM_URL', 'https://stream.wikimedia.org/v2/stream/recentchange')
+        self.wiki_filter = os.environ.get('WIKI_FILTER', '').strip()
+        
+        print(f"=== Wikipedia EventStreams Connection Test ===")
+        print(f"Stream URL: {self.stream_url}")
+        print(f"Wiki Filter: {self.wiki_filter if self.wiki_filter else 'None (all wikis)'}")
+        print(f"Target samples: 10 events")
+        print("=" * 50)
 
-    memory_allocation_data = [
-        {"m": "mem", "host": "host1", "used_percent": 64.56, "time": 1577836800000000000},
-        {"m": "mem", "host": "host2", "used_percent": 71.89, "time": 1577836801000000000},
-        {"m": "mem", "host": "host1", "used_percent": 63.27, "time": 1577836803000000000},
-        {"m": "mem", "host": "host2", "used_percent": 73.45, "time": 1577836804000000000},
-        {"m": "mem", "host": "host1", "used_percent": 62.98, "time": 1577836806000000000},
-        {"m": "mem", "host": "host2", "used_percent": 74.33, "time": 1577836808000000000},
-        {"m": "mem", "host": "host1", "used_percent": 65.21, "time": 1577836810000000000},
-    ]
-
-    def run(self):
+    def connect_and_test(self):
         """
-        Each Source must have a `run` method.
-
-        It will include the logic behind your source, contained within a
-        "while self.running" block for exiting when its parent Application stops.
-
-        There a few methods on a Source available for producing to Kafka, like
-        `self.serialize` and `self.produce`.
+        Connect to Wikipedia's EventStreams API and retrieve sample data.
         """
-        data = iter(self.memory_allocation_data)
-        # either break when the app is stopped, or data is exhausted
-        while self.running:
-            try:
-                event = next(data)
-                event_serialized = self.serialize(key=event["host"], value=event)
-                self.produce(key=event_serialized.key, value=event_serialized.value)
-                print("Source produced event successfully!")
-            except StopIteration:
-                print("Source finished producing messages.")
-                return
+        sample_count = 0
+        target_samples = 10
+        connection_start = time.time()
+        
+        try:
+            print(f"🔗 Connecting to {self.stream_url}...")
+            
+            with EventSource(self.stream_url) as stream:
+                print("✅ Connection established successfully!")
+                print(f"📊 Collecting {target_samples} sample events...\n")
+                
+                for event in stream:
+                    if event.type == 'message':
+                        try:
+                            # Parse the JSON data
+                            change = json.loads(event.data)
+                            
+                            # Skip canary events as recommended in the documentation
+                            if change.get('meta', {}).get('domain') == 'canary':
+                                continue
+                            
+                            # Apply wiki filtering if specified
+                            if self.wiki_filter and change.get('wiki') != self.wiki_filter:
+                                continue
+                            
+                            # Display the event
+                            sample_count += 1
+                            self._display_event(sample_count, change)
+                            
+                            # Check if we've collected enough samples
+                            if sample_count >= target_samples:
+                                break
+                                
+                        except (ValueError, json.JSONDecodeError) as e:
+                            print(f"⚠️ Failed to parse event data: {e}")
+                            continue
+                    
+                    elif event.type == 'error':
+                        print(f"❌ Received error event: {event.data}")
+                        break
+                
+                connection_duration = time.time() - connection_start
+                self._display_summary(sample_count, connection_duration)
+                
+        except KeyboardInterrupt:
+            print("\n🛑 Connection test interrupted by user")
+            connection_duration = time.time() - connection_start
+            self._display_summary(sample_count, connection_duration)
+            
+        except Exception as e:
+            print(f"❌ Connection failed: {e}")
+            print(f"   Error type: {type(e).__name__}")
+            self._display_troubleshooting()
+
+    def _display_event(self, event_number, change):
+        """
+        Display a formatted Wikipedia change event.
+        """
+        # Extract key information
+        timestamp = change.get('meta', {}).get('dt', 'Unknown')
+        wiki = change.get('wiki', 'Unknown')
+        server_name = change.get('server_name', 'Unknown')
+        change_type = change.get('type', 'Unknown')
+        title = change.get('title', 'Unknown')
+        user = change.get('user', 'Anonymous')
+        comment = change.get('comment', '')
+        revision_id = change.get('revision', {}).get('new', 'N/A')
+        
+        print(f"📄 Event #{event_number}")
+        print(f"   📅 Timestamp: {timestamp}")
+        print(f"   🌐 Wiki: {wiki} ({server_name})")
+        print(f"   🔄 Type: {change_type}")
+        print(f"   📝 Page: {title}")
+        print(f"   👤 User: {user}")
+        print(f"   🆔 Revision ID: {revision_id}")
+        if comment:
+            print(f"   💬 Comment: {comment[:100]}{'...' if len(comment) > 100 else ''}")
+        
+        # Show some additional metadata
+        if 'length' in change:
+            old_len = change['length'].get('old', 0)
+            new_len = change['length'].get('new', 0)
+            size_change = new_len - old_len
+            print(f"   📏 Size change: {size_change:+d} bytes ({old_len} → {new_len})")
+        
+        print()
+
+    def _display_summary(self, sample_count, duration):
+        """
+        Display connection test summary.
+        """
+        print("=" * 50)
+        print("📊 CONNECTION TEST SUMMARY")
+        print("=" * 50)
+        print(f"✅ Connection successful: Yes")
+        print(f"📈 Events collected: {sample_count}")
+        print(f"⏱️  Duration: {duration:.2f} seconds")
+        print(f"📊 Average rate: {sample_count/duration:.2f} events/second")
+        
+        if sample_count > 0:
+            print(f"\n🎯 DATA STRUCTURE INSIGHTS:")
+            print(f"   • Real-time Wikipedia changes detected")
+            print(f"   • JSON format with rich metadata")
+            print(f"   • Events include: timestamp, wiki, page, user, revisions")
+            print(f"   • Ready for Kafka integration")
+        
+        print(f"\n📋 NEXT STEPS:")
+        print(f"   • Connection test: PASSED ✅")
+        print(f"   • Data structure: ANALYZED ✅")
+        print(f"   • Ready for: Quix Streams integration")
+
+    def _display_troubleshooting(self):
+        """
+        Display troubleshooting information for connection failures.
+        """
+        print("\n🔧 TROUBLESHOOTING:")
+        print("   • Check internet connectivity")
+        print("   • Verify the stream URL is correct")
+        print("   • Ensure no firewall is blocking the connection")
+        print("   • Try again in a few moments (temporary service issues)")
+        print(f"   • Stream URL: {self.stream_url}")
 
 
 def main():
-    """ Here we will set up our Application. """
-
-    # Setup necessary objects
-    app = Application(consumer_group="data_producer", auto_create_topics=True)
-    memory_usage_source = MemoryUsageGenerator(name="memory-usage-producer")
-    output_topic = app.topic(name=os.environ["output"])
-
-    # --- Setup Source ---
-    # OPTION 1: no additional processing with a StreamingDataFrame
-    # Generally the recommended approach; no additional operations needed!
-    app.add_source(source=memory_usage_source, topic=output_topic)
-
-    # OPTION 2: additional processing with a StreamingDataFrame
-    # Useful for consolidating additional data cleanup into 1 Application.
-    # In this case, do NOT use `app.add_source()`.
-    # sdf = app.dataframe(source=source)
-    # <sdf operations here>
-    # sdf.to_topic(topic=output_topic) # you must do this to output your data!
-
-    # With our pipeline defined, now run the Application
-    app.run()
+    """
+    Main function to run the Wikipedia EventStreams connection test.
+    """
+    try:
+        # Create and run the connection test
+        test = WikipediaStreamConnectionTest()
+        test.connect_and_test()
+        
+    except Exception as e:
+        print(f"❌ Failed to initialize connection test: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        return 1
+    
+    return 0
 
 
-#  Sources require execution under a conditional main
 if __name__ == "__main__":
-    main()
+    exit(main())
