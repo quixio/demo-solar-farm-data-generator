@@ -82,9 +82,7 @@ class QuestDBSink(BatchingSink):
                 unit_voltage STRING,
                 current DOUBLE,
                 unit_current STRING,
-                inverter_status STRING,
-                topic_id STRING,
-                stream_id STRING
+                inverter_status STRING
             ) timestamp(timestamp) PARTITION BY DAY;
             """
             
@@ -137,9 +135,7 @@ class QuestDBSink(BatchingSink):
                 'unit_voltage': solar_data.get('unit_voltage'),
                 'current': solar_data.get('current'),
                 'unit_current': solar_data.get('unit_current'),
-                'inverter_status': solar_data.get('inverter_status'),
-                'topic_id': solar_data.get('location_id', 'unknown'),  # Use location_id as fallback
-                'stream_id': solar_data.get('location_id', 'unknown')  # Use location_id as fallback
+                'inverter_status': solar_data.get('inverter_status')
             }
         except Exception as e:
             logger.error(f"Error parsing message: {e}")
@@ -157,10 +153,9 @@ class QuestDBSink(BatchingSink):
             INSERT INTO {self.table_name} (
                 timestamp, panel_id, location_id, location_name, latitude, longitude, timezone,
                 power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
-                voltage, unit_voltage, current, unit_current, inverter_status,
-                topic_id, stream_id
+                voltage, unit_voltage, current, unit_current, inverter_status
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """
             
@@ -173,8 +168,7 @@ class QuestDBSink(BatchingSink):
                     record['timezone'], record['power_output'], record['unit_power'],
                     record['temperature'], record['unit_temp'], record['irradiance'],
                     record['unit_irradiance'], record['voltage'], record['unit_voltage'],
-                    record['current'], record['unit_current'], record['inverter_status'],
-                    record['topic_id'], record['stream_id']
+                    record['current'], record['unit_current'], record['inverter_status']
                 ))
             
             # Execute batch insert
