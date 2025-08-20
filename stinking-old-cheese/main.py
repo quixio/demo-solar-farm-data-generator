@@ -71,7 +71,7 @@ class QuestDBSink(BatchingSink):
                 location_name STRING,
                 latitude DOUBLE,
                 longitude DOUBLE,
-                timezone_offset INT,
+                timezone INT,
                 power_output DOUBLE,
                 unit_power STRING,
                 temperature DOUBLE,
@@ -126,7 +126,7 @@ class QuestDBSink(BatchingSink):
                 'location_name': solar_data.get('location_name'),
                 'latitude': solar_data.get('latitude'),
                 'longitude': solar_data.get('longitude'),
-                'timezone_offset': solar_data.get('timezone'),
+                'timezone': solar_data.get('timezone'),
                 'power_output': solar_data.get('power_output'),
                 'unit_power': solar_data.get('unit_power'),
                 'temperature': solar_data.get('temperature'),
@@ -155,7 +155,7 @@ class QuestDBSink(BatchingSink):
             # Prepare batch insert
             insert_sql = f"""
             INSERT INTO {self.table_name} (
-                timestamp, panel_id, location_id, location_name, latitude, longitude, timezone_offset,
+                timestamp, panel_id, location_id, location_name, latitude, longitude, timezone,
                 power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
                 voltage, unit_voltage, current, unit_current, inverter_status,
                 topic_id, stream_id
@@ -170,7 +170,7 @@ class QuestDBSink(BatchingSink):
                 values.append((
                     record['timestamp'], record['panel_id'], record['location_id'],
                     record['location_name'], record['latitude'], record['longitude'],
-                    record['timezone_offset'], record['power_output'], record['unit_power'],
+                    record['timezone'], record['power_output'], record['unit_power'],
                     record['temperature'], record['unit_temp'], record['irradiance'],
                     record['unit_irradiance'], record['voltage'], record['unit_voltage'],
                     record['current'], record['unit_current'], record['inverter_status'],
