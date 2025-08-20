@@ -265,7 +265,7 @@ def main():
     
     # Run application for testing (process 10 messages then stop)
     logger.info("Starting QuestDB sink application...")
-    app.run(count=10, timeout=20)
+    app.run()
 
 
 # Execute under conditional main
