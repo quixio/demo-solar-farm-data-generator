@@ -6,84 +6,279 @@ from quixstreams.sinks import BatchingSink, SinkBatch, SinkBackpressureError
 
 import os
 import time
+import json
+import logging
+import psycopg2
+from datetime import datetime
+from typing import Dict, Any
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
 # load_dotenv()
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-class MyDatabaseSink(BatchingSink):
+
+class QuestDBSink(BatchingSink):
     """
-    Sinks are a way of writing data from a Kafka topic to a non-Kafka destination,
-    often some sort of database or file.
-
-    This is a custom placeholder Sink which showcases a simple pattern around
-    creating your own for a database.
-
-    There are numerous pre-built sinks available to use out of the box; see:
-    https://quix.io/docs/quix-streams/connectors/sinks/index.html
+    A custom sink that writes solar panel data from Kafka to QuestDB.
+    
+    QuestDB is compatible with PostgreSQL wire protocol, so we use psycopg2 for connectivity.
     """
-    def _write_to_db(self, data):
-        """Placeholder for transformations and database write operation"""
-        ...
+    
+    def __init__(self, on_client_connect_success=None, on_client_connect_failure=None):
+        super().__init__(
+            on_client_connect_success=on_client_connect_success,
+            on_client_connect_failure=on_client_connect_failure
+        )
+        self.connection = None
+        self.table_name = os.environ.get("QUESTDB_TABLE", "solar_panel_data")
+        self._ensure_table_exists()
+    
+    def _get_connection(self):
+        """Establish connection to QuestDB"""
+        if self.connection is None or self.connection.closed:
+            try:
+                port = int(os.environ.get('QUESTDB_PORT', '8812'))
+            except ValueError:
+                port = 8812
+            
+            self.connection = psycopg2.connect(
+                host=os.environ.get("QUESTDB_HOST", "localhost"),
+                port=port,
+                database=os.environ.get("QUESTDB_DATABASE", "qdb"),
+                user=os.environ.get("QUESTDB_USER", "admin"),
+                password=os.environ.get("QUESTDB_PASSWORD", "quest")
+            )
+            self.connection.autocommit = True
+            logger.info("Successfully connected to QuestDB")
+        return self.connection
+    
+    def _ensure_table_exists(self):
+        """Create the solar_panel_data table if it doesn't exist"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # Create table with appropriate schema for solar panel data
+            create_table_sql = f"""
+            CREATE TABLE IF NOT EXISTS {self.table_name} (
+                timestamp TIMESTAMP,
+                panel_id STRING,
+                location_id STRING,
+                location_name STRING,
+                latitude DOUBLE,
+                longitude DOUBLE,
+                timezone INT,
+                power_output DOUBLE,
+                unit_power STRING,
+                temperature DOUBLE,
+                unit_temp STRING,
+                irradiance DOUBLE,
+                unit_irradiance STRING,
+                voltage DOUBLE,
+                unit_voltage STRING,
+                current DOUBLE,
+                unit_current STRING,
+                inverter_status STRING,
+                message_datetime TIMESTAMP,
+                topic_id STRING,
+                stream_id STRING
+            ) timestamp(timestamp) PARTITION BY DAY;
+            """
+            
+            cursor.execute(create_table_sql)
+            cursor.close()
+            logger.info(f"Table {self.table_name} is ready in QuestDB")
+            
+        except Exception as e:
+            logger.error(f"Error creating table: {e}")
+            raise
+    
+    def _parse_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Parse the Kafka message to extract solar panel data.
+        The message structure has the actual data JSON-encoded in the 'value' field.
+        """
+        try:
+            # Extract the JSON-encoded value field
+            value_json = message.get('value')
+            if isinstance(value_json, str):
+                # Parse the JSON string to get the actual solar data
+                solar_data = json.loads(value_json)
+            else:
+                solar_data = value_json
+            
+            # Convert the internal timestamp to a proper datetime
+            internal_timestamp = solar_data.get('timestamp')
+            if internal_timestamp:
+                # Convert nanosecond timestamp to datetime
+                timestamp_dt = datetime.fromtimestamp(internal_timestamp / 1_000_000_000)
+            else:
+                timestamp_dt = datetime.now()
+            
+            # Convert message dateTime to datetime object
+            message_datetime = message.get('dateTime')
+            if message_datetime:
+                message_dt = datetime.fromisoformat(message_datetime.replace('Z', '+00:00'))
+            else:
+                message_dt = datetime.now()
+            
+            # Return structured data for database insertion
+            return {
+                'timestamp': timestamp_dt,
+                'panel_id': solar_data.get('panel_id'),
+                'location_id': solar_data.get('location_id'),
+                'location_name': solar_data.get('location_name'),
+                'latitude': solar_data.get('latitude'),
+                'longitude': solar_data.get('longitude'),
+                'timezone': solar_data.get('timezone'),
+                'power_output': solar_data.get('power_output'),
+                'unit_power': solar_data.get('unit_power'),
+                'temperature': solar_data.get('temperature'),
+                'unit_temp': solar_data.get('unit_temp'),
+                'irradiance': solar_data.get('irradiance'),
+                'unit_irradiance': solar_data.get('unit_irradiance'),
+                'voltage': solar_data.get('voltage'),
+                'unit_voltage': solar_data.get('unit_voltage'),
+                'current': solar_data.get('current'),
+                'unit_current': solar_data.get('unit_current'),
+                'inverter_status': solar_data.get('inverter_status'),
+                'message_datetime': message_dt,
+                'topic_id': message.get('topicId'),
+                'stream_id': message.get('streamId')
+            }
+        except Exception as e:
+            logger.error(f"Error parsing message: {e}")
+            logger.error(f"Raw message: {message}")
+            raise
+    
+    def _write_to_questdb(self, data_batch):
+        """Write batch of solar panel data to QuestDB"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # Prepare batch insert
+            insert_sql = f"""
+            INSERT INTO {self.table_name} (
+                timestamp, panel_id, location_id, location_name, latitude, longitude, timezone,
+                power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
+                voltage, unit_voltage, current, unit_current, inverter_status,
+                message_datetime, topic_id, stream_id
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            """
+            
+            # Prepare values for batch insert
+            values = []
+            for record in data_batch:
+                values.append((
+                    record['timestamp'], record['panel_id'], record['location_id'],
+                    record['location_name'], record['latitude'], record['longitude'],
+                    record['timezone'], record['power_output'], record['unit_power'],
+                    record['temperature'], record['unit_temp'], record['irradiance'],
+                    record['unit_irradiance'], record['voltage'], record['unit_voltage'],
+                    record['current'], record['unit_current'], record['inverter_status'],
+                    record['message_datetime'], record['topic_id'], record['stream_id']
+                ))
+            
+            # Execute batch insert
+            cursor.executemany(insert_sql, values)
+            cursor.close()
+            
+            logger.info(f"Successfully wrote {len(data_batch)} records to QuestDB table {self.table_name}")
+            
+            # Verify the write by checking table count
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT COUNT(*) FROM {self.table_name}")
+            total_count = cursor.fetchone()[0]
+            cursor.close()
+            logger.info(f"Total records in {self.table_name}: {total_count}")
+            
+        except Exception as e:
+            logger.error(f"Error writing to QuestDB: {e}")
+            raise
 
     def write(self, batch: SinkBatch):
         """
-        Every Sink requires a .write method.
-
-        Here is where we attempt to write batches of data (multiple consumed messages,
-        for the sake of efficiency/speed) to our database.
-
-        Sinks have sanctioned patterns around retrying and handling connections.
-
-        See https://quix.io/docs/quix-streams/connectors/sinks/custom-sinks.html for
-        more details.
+        Write batch of messages to QuestDB with retry logic and error handling.
         """
         attempts_remaining = 3
-        data = [item.value for item in batch]
+        
+        # Parse all messages in the batch
+        try:
+            parsed_data = []
+            for item in batch:
+                logger.info(f"Raw message: {item.value}")
+                parsed_record = self._parse_message(item.value)
+                parsed_data.append(parsed_record)
+            
+            logger.info(f"Processing batch of {len(parsed_data)} messages")
+        except Exception as e:
+            logger.error(f"Error parsing batch: {e}")
+            raise
+        
+        # Attempt to write to database with retries
         while attempts_remaining:
             try:
-                return self._write_to_db(data)
-            except ConnectionError:
-                # Maybe we just failed to connect, do a short wait and try again
-                # We can't repeat forever; the consumer will eventually time out
+                self._write_to_questdb(parsed_data)
+                return
+            except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+                # Connection issues - retry with backoff
+                logger.warning(f"Connection error, retrying... ({e})")
                 attempts_remaining -= 1
                 if attempts_remaining:
                     time.sleep(3)
-            except TimeoutError:
-                # Maybe the server is busy, do a sanctioned extended pause
-                # Always safe to do, but will require re-consuming the data.
+                self.connection = None  # Force reconnection
+            except psycopg2.Error as e:
+                # Database error that might be temporary
+                logger.warning(f"Database error, applying backpressure... ({e})")
                 raise SinkBackpressureError(
-                    retry_after=30.0,
+                    retry_after=10.0,
                     topic=batch.topic,
                     partition=batch.partition,
                 )
-        raise Exception("Error while writing to database")
+            except Exception as e:
+                logger.error(f"Unexpected error: {e}")
+                attempts_remaining -= 1
+                if attempts_remaining:
+                    time.sleep(3)
+        
+        raise Exception(f"Failed to write batch to QuestDB after 3 attempts")
 
 
 def main():
-    """ Here we will set up our Application. """
-
-    # Setup necessary objects
+    """Set up the Quix Streams application with QuestDB sink"""
+    
+    # Setup application
     app = Application(
-        consumer_group="my_db_destination",
+        consumer_group="questdb_solar_sink",
         auto_create_topics=True,
         auto_offset_reset="earliest"
     )
-    my_db_sink = MyDatabaseSink()
+    
+    # Initialize QuestDB sink
+    questdb_sink = QuestDBSink()
+    
+    # Configure input topic
     input_topic = app.topic(name=os.environ["input"])
     sdf = app.dataframe(topic=input_topic)
+    
+    # Optional: Add transformations here if needed
+    sdf = sdf.print(metadata=True)
+    
+    # Sink to QuestDB
+    sdf.sink(questdb_sink)
+    
+    # Run application for testing (process 10 messages then stop)
+    logger.info("Starting QuestDB sink application...")
+    app.run(count=10, timeout=20)
 
-    # Do SDF operations/transformations
-    sdf = sdf.apply(lambda row: row).print(metadata=True)
 
-    # Finish by calling StreamingDataFrame.sink()
-    sdf.sink(my_db_sink)
-
-    # With our pipeline defined, now run the Application
-    app.run()
-
-
-# It is recommended to execute Applications under a conditional main
+# Execute under conditional main
 if __name__ == "__main__":
     main()
