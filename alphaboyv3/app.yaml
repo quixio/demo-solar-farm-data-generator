@@ -1,15 +1,16 @@
 name: alphaboyv3
 language: python
 variables:
-  - name: output
-    inputType: OutputTopic
-    description: Name of the output topic to write into
-    defaultValue: stock-data
-    required: true
-  - name: ALPHA_VANTAGE_API_KEY
-    inputType: Secret
-    defaultValue: AV_API_KEY
-    required: true
+- name: output
+  inputType: OutputTopic
+  description: Name of the output topic to write into
+  defaultValue: stock-data
+  required: true
+- name: ALPHA_VANTAGE_API_KEY
+  inputType: Secret
+  description: Alpha Vantage API key for accessing stock market data
+  required: true
+  defaultValue: AV_API_KEY
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
