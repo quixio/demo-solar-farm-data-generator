@@ -82,10 +82,7 @@ class QuestDBSink(BatchingSink):
                 unit_voltage STRING,
                 current DOUBLE,
                 unit_current STRING,
-                inverter_status STRING,
-                message_datetime TIMESTAMP,
-                topic_id STRING,
-                stream_id STRING
+                inverter_status STRING
             ) timestamp(timestamp) PARTITION BY DAY;
             """
             
@@ -100,16 +97,16 @@ class QuestDBSink(BatchingSink):
     def _parse_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
         Parse the Kafka message to extract solar panel data.
-        The message structure has the actual data JSON-encoded in the 'value' field.
+        The message structure has the actual solar data directly in the message.
         """
         try:
-            # Extract the JSON-encoded value field
-            value_json = message.get('value')
-            if isinstance(value_json, str):
-                # Parse the JSON string to get the actual solar data
-                solar_data = json.loads(value_json)
-            else:
-                solar_data = value_json
+            # In the actual runtime, the message IS the solar data
+            # No need to extract from a nested 'value' field
+            solar_data = message
+            
+            # Validate that we have the expected solar data
+            if solar_data is None or not isinstance(solar_data, dict):
+                raise ValueError(f"Expected dictionary with solar data, got: {type(solar_data)}")
             
             # Convert the internal timestamp to a proper datetime
             internal_timestamp = solar_data.get('timestamp')
@@ -118,13 +115,6 @@ class QuestDBSink(BatchingSink):
                 timestamp_dt = datetime.fromtimestamp(internal_timestamp / 1_000_000_000)
             else:
                 timestamp_dt = datetime.now()
-            
-            # Convert message dateTime to datetime object
-            message_datetime = message.get('dateTime')
-            if message_datetime:
-                message_dt = datetime.fromisoformat(message_datetime.replace('Z', '+00:00'))
-            else:
-                message_dt = datetime.now()
             
             # Return structured data for database insertion
             return {
@@ -145,10 +135,7 @@ class QuestDBSink(BatchingSink):
                 'unit_voltage': solar_data.get('unit_voltage'),
                 'current': solar_data.get('current'),
                 'unit_current': solar_data.get('unit_current'),
-                'inverter_status': solar_data.get('inverter_status'),
-                'message_datetime': message_dt,
-                'topic_id': message.get('topicId'),
-                'stream_id': message.get('streamId')
+                'inverter_status': solar_data.get('inverter_status')
             }
         except Exception as e:
             logger.error(f"Error parsing message: {e}")
@@ -166,10 +153,9 @@ class QuestDBSink(BatchingSink):
             INSERT INTO {self.table_name} (
                 timestamp, panel_id, location_id, location_name, latitude, longitude, timezone,
                 power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
-                voltage, unit_voltage, current, unit_current, inverter_status,
-                message_datetime, topic_id, stream_id
+                voltage, unit_voltage, current, unit_current, inverter_status
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """
             
@@ -182,22 +168,26 @@ class QuestDBSink(BatchingSink):
                     record['timezone'], record['power_output'], record['unit_power'],
                     record['temperature'], record['unit_temp'], record['irradiance'],
                     record['unit_irradiance'], record['voltage'], record['unit_voltage'],
-                    record['current'], record['unit_current'], record['inverter_status'],
-                    record['message_datetime'], record['topic_id'], record['stream_id']
+                    record['current'], record['unit_current'], record['inverter_status']
                 ))
             
             # Execute batch insert
             cursor.executemany(insert_sql, values)
             cursor.close()
             
-            logger.info(f"Successfully wrote {len(data_batch)} records to QuestDB table {self.table_name}")
+            logger.info(f"✅ BATCH WRITTEN: Successfully wrote {len(data_batch)} records to QuestDB table {self.table_name}")
             
-            # Verify the write by checking table count
+            # Verify the write by checking table count and showing sample data
             cursor = conn.cursor()
             cursor.execute(f"SELECT COUNT(*) FROM {self.table_name}")
             total_count = cursor.fetchone()[0]
+            logger.info(f"✅ TABLE VERIFICATION: Total records in {self.table_name}: {total_count}")
+            
+            # Show sample of the most recent records to prove data was written
+            cursor.execute(f"SELECT panel_id, power_output, timestamp FROM {self.table_name} ORDER BY timestamp DESC LIMIT 3")
+            recent_records = cursor.fetchall()
+            logger.info(f"✅ RECENT RECORDS: {recent_records}")
             cursor.close()
-            logger.info(f"Total records in {self.table_name}: {total_count}")
             
         except Exception as e:
             logger.error(f"Error writing to QuestDB: {e}")
@@ -213,13 +203,14 @@ class QuestDBSink(BatchingSink):
         try:
             parsed_data = []
             for item in batch:
-                logger.info(f"Raw message: {item.value}")
+                logger.info(f"📥 Raw message: {item.value}")
                 parsed_record = self._parse_message(item.value)
                 parsed_data.append(parsed_record)
+                logger.info(f"✅ Parsed record for panel: {parsed_record.get('panel_id')}, power: {parsed_record.get('power_output')}W")
             
-            logger.info(f"Processing batch of {len(parsed_data)} messages")
+            logger.info(f"🔄 Processing batch of {len(parsed_data)} messages")
         except Exception as e:
-            logger.error(f"Error parsing batch: {e}")
+            logger.error(f"❌ Error parsing batch: {e}")
             raise
         
         # Attempt to write to database with retries
@@ -238,9 +229,7 @@ class QuestDBSink(BatchingSink):
                 # Database error that might be temporary
                 logger.warning(f"Database error, applying backpressure... ({e})")
                 raise SinkBackpressureError(
-                    retry_after=10.0,
-                    topic=batch.topic,
-                    partition=batch.partition,
+                    retry_after=10.0
                 )
             except Exception as e:
                 logger.error(f"Unexpected error: {e}")
@@ -276,7 +265,7 @@ def main():
     
     # Run application for testing (process 10 messages then stop)
     logger.info("Starting QuestDB sink application...")
-    app.run(count=10, timeout=20)
+    app.run()
 
 
 # Execute under conditional main
