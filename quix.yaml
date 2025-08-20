@@ -166,23 +166,6 @@ deployments:
           targetPort: 9000
         - port: 8123
           targetPort: 8123
-  - name: alphavantage-joy
-    application: al-pha-boy-2000
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
-    variables:
-      - name: ALPHAVANTAGE_API_KEY
-        inputType: Secret
-        required: true
-        secretKey: AV_API_KEY
-      - name: output
-        inputType: OutputTopic
-        required: true
-        value: stock-data
   - name: stinking-old-cheese
     application: stinking-old-cheese
     version: latest
