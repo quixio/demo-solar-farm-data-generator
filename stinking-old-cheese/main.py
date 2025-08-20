@@ -65,7 +65,7 @@ class QuestDBSink(BatchingSink):
             # Create table with appropriate schema for solar panel data
             create_table_sql = f"""
             CREATE TABLE IF NOT EXISTS {self.table_name} (
-                timestamp TIMESTAMP,
+                ts TIMESTAMP,
                 panel_id STRING,
                 location_id STRING,
                 location_name STRING,
@@ -83,10 +83,9 @@ class QuestDBSink(BatchingSink):
                 current DOUBLE,
                 unit_current STRING,
                 inverter_status STRING,
-                message_datetime TIMESTAMP,
                 topic_id STRING,
                 stream_id STRING
-            ) timestamp(timestamp) PARTITION BY DAY;
+            ) timestamp(ts) PARTITION BY DAY;
             """
             
             cursor.execute(create_table_sql)
@@ -119,12 +118,9 @@ class QuestDBSink(BatchingSink):
             else:
                 timestamp_dt = datetime.now()
             
-            # For message datetime, use current time since it's not in the actual message format
-            message_dt = datetime.now()
-            
             # Return structured data for database insertion
             return {
-                'timestamp': timestamp_dt,
+                'ts': timestamp_dt,
                 'panel_id': solar_data.get('panel_id'),
                 'location_id': solar_data.get('location_id'),
                 'location_name': solar_data.get('location_name'),
@@ -142,7 +138,6 @@ class QuestDBSink(BatchingSink):
                 'current': solar_data.get('current'),
                 'unit_current': solar_data.get('unit_current'),
                 'inverter_status': solar_data.get('inverter_status'),
-                'message_datetime': message_dt,
                 'topic_id': solar_data.get('location_id', 'unknown'),  # Use location_id as fallback
                 'stream_id': solar_data.get('location_id', 'unknown')  # Use location_id as fallback
             }
@@ -160,12 +155,12 @@ class QuestDBSink(BatchingSink):
             # Prepare batch insert
             insert_sql = f"""
             INSERT INTO {self.table_name} (
-                timestamp, panel_id, location_id, location_name, latitude, longitude, timezone,
+                ts, panel_id, location_id, location_name, latitude, longitude, timezone,
                 power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
                 voltage, unit_voltage, current, unit_current, inverter_status,
-                message_datetime, topic_id, stream_id
+                topic_id, stream_id
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """
             
@@ -173,13 +168,13 @@ class QuestDBSink(BatchingSink):
             values = []
             for record in data_batch:
                 values.append((
-                    record['timestamp'], record['panel_id'], record['location_id'],
+                    record['ts'], record['panel_id'], record['location_id'],
                     record['location_name'], record['latitude'], record['longitude'],
                     record['timezone'], record['power_output'], record['unit_power'],
                     record['temperature'], record['unit_temp'], record['irradiance'],
                     record['unit_irradiance'], record['voltage'], record['unit_voltage'],
                     record['current'], record['unit_current'], record['inverter_status'],
-                    record['message_datetime'], record['topic_id'], record['stream_id']
+                    record['topic_id'], record['stream_id']
                 ))
             
             # Execute batch insert
@@ -195,7 +190,7 @@ class QuestDBSink(BatchingSink):
             logger.info(f"✅ TABLE VERIFICATION: Total records in {self.table_name}: {total_count}")
             
             # Show sample of the most recent records to prove data was written
-            cursor.execute(f"SELECT panel_id, power_output, timestamp FROM {self.table_name} ORDER BY timestamp DESC LIMIT 3")
+            cursor.execute(f"SELECT panel_id, power_output, ts FROM {self.table_name} ORDER BY ts DESC LIMIT 3")
             recent_records = cursor.fetchall()
             logger.info(f"✅ RECENT RECORDS: {recent_records}")
             cursor.close()
@@ -240,9 +235,7 @@ class QuestDBSink(BatchingSink):
                 # Database error that might be temporary
                 logger.warning(f"Database error, applying backpressure... ({e})")
                 raise SinkBackpressureError(
-                    retry_after=10.0,
-                    topic=batch.topic,
-                    partition=batch.partition,
+                    retry_after=10.0
                 )
             except Exception as e:
                 logger.error(f"Unexpected error: {e}")
