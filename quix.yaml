@@ -220,6 +220,23 @@ deployments:
         inputType: FreeText
         description: Name of the table to write solar panel data to
         value: solar_panel_data
+  - name: alphav5
+    application: alphaboyv3
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 200
+      memory: 500
+      replicas: 1
+    variables:
+      - name: output
+        inputType: OutputTopic
+        required: true
+        value: stock-data
+      - name: ALPHA_VANTAGE_API_KEY
+        inputType: Secret
+        required: true
+        secretKey: AV_API_KEY
 
 # This section describes the Topics of the data pipeline
 topics:
