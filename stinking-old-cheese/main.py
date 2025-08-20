@@ -65,13 +65,13 @@ class QuestDBSink(BatchingSink):
             # Create table with appropriate schema for solar panel data
             create_table_sql = f"""
             CREATE TABLE IF NOT EXISTS {self.table_name} (
-                ts TIMESTAMP,
+                timestamp TIMESTAMP,
                 panel_id STRING,
                 location_id STRING,
                 location_name STRING,
                 latitude DOUBLE,
                 longitude DOUBLE,
-                timezone INT,
+                timezone_offset INT,
                 power_output DOUBLE,
                 unit_power STRING,
                 temperature DOUBLE,
@@ -85,7 +85,7 @@ class QuestDBSink(BatchingSink):
                 inverter_status STRING,
                 topic_id STRING,
                 stream_id STRING
-            ) timestamp(ts) PARTITION BY DAY;
+            ) timestamp(timestamp) PARTITION BY DAY;
             """
             
             cursor.execute(create_table_sql)
@@ -120,13 +120,13 @@ class QuestDBSink(BatchingSink):
             
             # Return structured data for database insertion
             return {
-                'ts': timestamp_dt,
+                'timestamp': timestamp_dt,
                 'panel_id': solar_data.get('panel_id'),
                 'location_id': solar_data.get('location_id'),
                 'location_name': solar_data.get('location_name'),
                 'latitude': solar_data.get('latitude'),
                 'longitude': solar_data.get('longitude'),
-                'timezone': solar_data.get('timezone'),
+                'timezone_offset': solar_data.get('timezone'),
                 'power_output': solar_data.get('power_output'),
                 'unit_power': solar_data.get('unit_power'),
                 'temperature': solar_data.get('temperature'),
@@ -155,7 +155,7 @@ class QuestDBSink(BatchingSink):
             # Prepare batch insert
             insert_sql = f"""
             INSERT INTO {self.table_name} (
-                ts, panel_id, location_id, location_name, latitude, longitude, timezone,
+                timestamp, panel_id, location_id, location_name, latitude, longitude, timezone_offset,
                 power_output, unit_power, temperature, unit_temp, irradiance, unit_irradiance,
                 voltage, unit_voltage, current, unit_current, inverter_status,
                 topic_id, stream_id
@@ -168,9 +168,9 @@ class QuestDBSink(BatchingSink):
             values = []
             for record in data_batch:
                 values.append((
-                    record['ts'], record['panel_id'], record['location_id'],
+                    record['timestamp'], record['panel_id'], record['location_id'],
                     record['location_name'], record['latitude'], record['longitude'],
-                    record['timezone'], record['power_output'], record['unit_power'],
+                    record['timezone_offset'], record['power_output'], record['unit_power'],
                     record['temperature'], record['unit_temp'], record['irradiance'],
                     record['unit_irradiance'], record['voltage'], record['unit_voltage'],
                     record['current'], record['unit_current'], record['inverter_status'],
@@ -190,7 +190,7 @@ class QuestDBSink(BatchingSink):
             logger.info(f"✅ TABLE VERIFICATION: Total records in {self.table_name}: {total_count}")
             
             # Show sample of the most recent records to prove data was written
-            cursor.execute(f"SELECT panel_id, power_output, ts FROM {self.table_name} ORDER BY ts DESC LIMIT 3")
+            cursor.execute(f"SELECT panel_id, power_output, timestamp FROM {self.table_name} ORDER BY timestamp DESC LIMIT 3")
             recent_records = cursor.fetchall()
             logger.info(f"✅ RECENT RECORDS: {recent_records}")
             cursor.close()
