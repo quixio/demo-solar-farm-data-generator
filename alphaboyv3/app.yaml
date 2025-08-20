@@ -4,7 +4,11 @@ variables:
   - name: output
     inputType: OutputTopic
     description: Name of the output topic to write into
-    defaultValue: csv-data
+    defaultValue: stock-data
+    required: true
+  - name: ALPHA_VANTAGE_API_KEY
+    inputType: Secret
+    defaultValue: AV_API_KEY
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
