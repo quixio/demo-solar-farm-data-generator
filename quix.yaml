@@ -183,7 +183,7 @@ deployments:
         inputType: OutputTopic
         required: true
         value: stock-data
-  - name: stinking-old-cheese
+  - name: stinking-old-cheesev2
     application: stinking-old-cheese
     version: latest
     deploymentType: Service
