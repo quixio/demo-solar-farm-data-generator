@@ -210,6 +210,36 @@ deployments:
         inputType: OutputTopic
         required: true
         value: stock-data
+  - name: questdb-delight
+    application: stinking-old-cheese
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 200
+      memory: 500
+      replicas: 1
+    variables:
+      - name: input
+        inputType: InputTopic
+        value: solar-data
+      - name: QUESTDB_HOST
+        inputType: FreeText
+        value: questdb
+      - name: QUESTDB_PORT
+        inputType: FreeText
+        value: 8812
+      - name: QUESTDB_DATABASE
+        inputType: FreeText
+        value: qdb
+      - name: QUESTDB_USER
+        inputType: FreeText
+        value: admin
+      - name: QUESTDB_PASSWORD
+        inputType: Secret
+        secretKey: QUESTDB_PW
+      - name: QUESTDB_TABLE
+        inputType: FreeText
+        value: solar_panel_data
 
 # This section describes the Topics of the data pipeline
 topics:
