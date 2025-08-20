@@ -255,7 +255,7 @@ def main():
     sdf.sink(gcp_sink)
 
     # With our pipeline defined, now run the Application for testing
-    app.run(count=10, timeout=20)
+    app.run()
 
 
 # It is recommended to execute Applications under a conditional main
