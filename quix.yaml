@@ -194,24 +194,31 @@ deployments:
     variables:
       - name: input
         inputType: InputTopic
+        description: Name of the input topic to listen to.
         value: solar-data
       - name: QUESTDB_HOST
         inputType: FreeText
+        description: QuestDB host address
         value: questdb
       - name: QUESTDB_PORT
         inputType: FreeText
+        description: QuestDB PostgreSQL wire protocol port
         value: 8812
       - name: QUESTDB_DATABASE
         inputType: FreeText
+        description: QuestDB database name
         value: qdb
       - name: QUESTDB_USER
         inputType: FreeText
+        description: QuestDB username
         value: admin
       - name: QUESTDB_PASSWORD
         inputType: Secret
+        description: QuestDB password
         secretKey: QUESTDB_PW
       - name: QUESTDB_TABLE
         inputType: FreeText
+        description: Name of the table to write solar panel data to
         value: solar_panel_data
 
 # This section describes the Topics of the data pipeline
