@@ -1,10 +1,34 @@
 name: stinking-old-cheese
 language: python
 variables:
-  - name: input
-    inputType: InputTopic
-    description: Name of the input topic to listen to.
-    defaultValue: transform
+- name: input
+  inputType: InputTopic
+  description: Name of the input topic to listen to.
+  defaultValue: solar-data
+- name: QUESTDB_HOST
+  inputType: FreeText
+  description: QuestDB host address
+  defaultValue: questdb
+- name: QUESTDB_PORT
+  inputType: FreeText
+  description: QuestDB PostgreSQL wire protocol port
+  defaultValue: '8812'
+- name: QUESTDB_DATABASE
+  inputType: FreeText
+  description: QuestDB database name
+  defaultValue: qdb
+- name: QUESTDB_USER
+  inputType: FreeText
+  description: QuestDB username
+  defaultValue: admin
+- name: QUESTDB_PASSWORD
+  inputType: Secret
+  description: QuestDB password
+  defaultValue: QUESTDB_PW
+- name: QUESTDB_TABLE
+  inputType: FreeText
+  description: Name of the table to write solar panel data to
+  defaultValue: solar_panel_data
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
