@@ -193,6 +193,23 @@ deployments:
       - name: CSV_FILENAME
         inputType: FreeText
         value: solar_data.csv
+  - name: alphavantage-joy
+    application: al-pha-boy-2000
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 200
+      memory: 500
+      replicas: 1
+    variables:
+      - name: ALPHAVANTAGE_API_KEY
+        inputType: Secret
+        required: true
+        secretKey: AV_API_KEY
+      - name: output
+        inputType: OutputTopic
+        required: true
+        value: stock-data
 
 # This section describes the Topics of the data pipeline
 topics:
