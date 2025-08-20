@@ -166,33 +166,6 @@ deployments:
           targetPort: 9000
         - port: 8123
           targetPort: 8123
-  - name: gcp-deploy-v1
-    application: gcp-sinkv1
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
-    variables:
-      - name: input
-        inputType: InputTopic
-        value: solar-data
-      - name: GCP_PROJECT_ID
-        inputType: FreeText
-        required: true
-        value: quix-testing-365012
-      - name: GCP_BUCKET_NAME
-        inputType: FreeText
-        required: true
-        value: quix-workflow
-      - name: GCP_CREDENTIALS_JSON
-        inputType: Secret
-        required: true
-        secretKey: GCLOUD_PK_JSON
-      - name: CSV_FILENAME
-        inputType: FreeText
-        value: solar_data.csv
   - name: alphavantage-joy
     application: al-pha-boy-2000
     version: latest
