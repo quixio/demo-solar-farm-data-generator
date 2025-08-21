@@ -225,3 +225,6 @@ topics:
   - name: slack-data
     configuration:
       partitions: 1
+  - name: bitcoin-blockchain-transactions
+    configuration:
+      partitions: 1
