@@ -4,14 +4,17 @@ variables:
   - name: output
     inputType: OutputTopic
     description: Name of the output topic to write into
-    defaultValue: csv-data
+    defaultValue: opensky-data
     required: true
   - name: OPENSKY_USERNAME
     inputType: FreeText
+    defaultValue: mc2568
   - name: OPENSKY_PASSWORD
     inputType: FreeText
+    defaultValue: OPENSKY_PWD_KEY
   - name: AIRPORT_ICAO
     inputType: FreeText
+    defaultValue: EDDB
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
