@@ -1,2 +1,0 @@
-quixstreams[postgresql]==3.22.0
-python-dotenv==1.0.0
