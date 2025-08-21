@@ -1,3 +1,0 @@
-quixstreams==3.22.0
-python-dotenv
-websockets>=11.0.3
