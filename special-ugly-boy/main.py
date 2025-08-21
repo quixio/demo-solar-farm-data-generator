@@ -1,9 +1,19 @@
 import os
 import json
 import time
-import websocket
 from datetime import datetime
 import threading
+
+# Import websocket-client library
+try:
+    import websocket
+    # Verify we have the correct websocket-client library
+    if not hasattr(websocket, 'WebSocketApp'):
+        raise ImportError("Wrong websocket module - need websocket-client package")
+except ImportError as e:
+    print(f"❌ Error importing websocket library: {e}")
+    print("Please ensure 'websocket-client' package is installed")
+    raise
 
 def test_blockchain_websocket_connection():
     """
@@ -145,8 +155,13 @@ def test_blockchain_websocket_connection():
         # Create WebSocket connection
         print("🔄 Attempting to connect to blockchain.com WebSocket...")
         
-        # Enable WebSocket debug traces for troubleshooting
-        websocket.enableTrace(False)  # Set to True for detailed debugging
+        # Enable WebSocket debug traces for troubleshooting (if available)
+        try:
+            websocket.enableTrace(False)  # Set to True for detailed debugging
+        except AttributeError as e:
+            # enableTrace might not be available in some websocket implementations
+            print(f"Note: WebSocket debug tracing not available - {e}")
+            print("This is not critical for the connection test")
         
         ws = websocket.WebSocketApp(
             websocket_url,
@@ -188,6 +203,15 @@ def main():
     This is a connection test only - no Quix Streams integration yet.
     """
     print("Starting blockchain.com WebSocket connection test...")
+    
+    # Verify websocket-client installation
+    print("Checking websocket-client library...")
+    try:
+        print(f"✅ WebSocket library version: {websocket.__version__ if hasattr(websocket, '__version__') else 'unknown'}")
+        print(f"✅ WebSocketApp available: {'Yes' if hasattr(websocket, 'WebSocketApp') else 'No'}")
+        print(f"✅ enableTrace available: {'Yes' if hasattr(websocket, 'enableTrace') else 'No'}")
+    except Exception as e:
+        print(f"❌ Error checking websocket library: {e}")
     
     try:
         success = test_blockchain_websocket_connection()
