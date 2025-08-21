@@ -9,8 +9,8 @@ import json
 import time
 from datetime import datetime
 from typing import Dict, Any, List
-from websocket import WebSocketApp
 import websocket
+from websocket import WebSocketApp
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
