@@ -229,3 +229,6 @@ topics:
   - name: opensky-data
     configuration:
       partitions: 1
+  - name: openweather-data
+    configuration:
+      partitions: 1
