@@ -6,6 +6,15 @@ from quixstreams.sources import Source
 
 import os
 
+# Verify we have the correct websocket package
+try:
+    # This should exist in websocket-client but not in the conflicting websocket package
+    assert hasattr(websocket, 'WebSocketApp'), "Wrong websocket package installed. Need websocket-client, not websocket."
+    print("✅ Using correct websocket-client package")
+except AssertionError as e:
+    print(f"❌ Package conflict detected: {e}")
+    raise ImportError("Please uninstall 'websocket' package and install 'websocket-client' instead")
+
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
 # load_dotenv()
