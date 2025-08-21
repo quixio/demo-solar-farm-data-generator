@@ -1,2 +1,4 @@
-quixstreams==3.14.1
+quixstreams==3.22.0
 python-dotenv
+quixstreams
+websocket
