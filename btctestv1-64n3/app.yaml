@@ -4,7 +4,11 @@ variables:
   - name: output
     inputType: OutputTopic
     description: Name of the output topic to write into
-    defaultValue: csv-data
+    defaultValue: bitcoin-blockchain-transactions
+    required: true
+  - name: API_KEY
+    inputType: Secret
+    defaultValue: TSDB_SECRET_KEY
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
