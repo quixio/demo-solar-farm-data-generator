@@ -8,11 +8,13 @@ variables:
     required: true
   - name: SAMPLE_COUNT
     inputType: FreeText
+    defaultValue: 10
   - name: CONNECTION_TIMEOUT
     inputType: FreeText
     defaultValue: 1
   - name: WEBSOCKET_URL
     inputType: FreeText
+    defaultValue: wss://ws.blockchain.info/inv
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
