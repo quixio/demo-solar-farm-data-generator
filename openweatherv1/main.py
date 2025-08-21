@@ -238,6 +238,7 @@ class OpenWeatherSource(Source):
         print(f"📊 Starting data collection (max {self.max_messages} messages)...")
         
         while self.running and self.message_count < self.max_messages:
+            print("I AM A TEST MESSAGE")
             try:
                 print(f"\n🔄 Fetching weather data (message {self.message_count + 1}/{self.max_messages})...")
                 
