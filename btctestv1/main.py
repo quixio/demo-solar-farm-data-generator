@@ -13,6 +13,7 @@ import json
 import time
 import threading
 import websocket
+from websocket import WebSocketApp
 from datetime import datetime
 
 # for local dev, you can load env vars from a .env file
@@ -129,7 +130,7 @@ class BitcoinWebSocketTest:
             # websocket.enableTrace(True)
             
             # Create WebSocket connection
-            self.ws = websocket.WebSocketApp(
+            self.ws = WebSocketApp(
                 self.ws_url,
                 on_message=self.on_message,
                 on_error=self.on_error,
