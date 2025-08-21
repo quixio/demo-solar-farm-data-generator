@@ -3,252 +3,319 @@ import json
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
+from quixstreams import Application
+from quixstreams.sources import Source
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
-def format_message(message: Dict) -> Dict:
-    """
-    Format a Slack message for display and future processing.
-    
-    Args:
-        message: Raw message dict from Slack API
-        
-    Returns:
-        Formatted message dict with standardized fields
-    """
-    # Convert timestamp to readable format
-    timestamp = float(message.get('ts', 0))
-    readable_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S') if timestamp else 'Unknown'
-    
-    return {
-        'message_id': message.get('ts', 'unknown'),
-        'timestamp': timestamp,
-        'readable_time': readable_time,
-        'user_id': message.get('user', 'unknown'),
-        'text': message.get('text', ''),
-        'message_type': message.get('type', 'message'),
-        'subtype': message.get('subtype'),
-        'thread_ts': message.get('thread_ts'),
-        'reply_count': message.get('reply_count', 0),
-        'reactions': message.get('reactions', []),
-        'files': [{'id': f.get('id'), 'name': f.get('name'), 'mimetype': f.get('mimetype')} 
-                 for f in message.get('files', [])],
-        'raw_message': message  # Keep original for debugging
-    }
+# for local dev, load env vars from a .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not required in production
 
-def get_channel_id(client: WebClient, channel_name: str) -> Optional[str]:
+
+class SlackSource(Source):
     """
-    Get channel ID from channel name.
-    
-    Args:
-        client: Slack WebClient instance
-        channel_name: Name of the channel (without # prefix)
-        
-    Returns:
-        Channel ID if found, None otherwise
+    A Quix Streams Source that reads messages from a Slack channel using the Web API
+    and publishes them to a Kafka topic.
     """
-    try:
-        # Remove # if present
-        channel_name = channel_name.lstrip('#')
-        
-        print(f"🔍 Searching for channel: #{channel_name}")
-        
-        # Get list of channels
-        response = client.conversations_list(
-            types="public_channel,private_channel",
-            limit=1000
-        )
-        
-        channels = response.get('channels', [])
-        print(f"📋 Found {len(channels)} total channels")
-        
-        # Find matching channel
-        for channel in channels:
-            if channel['name'] == channel_name:
-                print(f"✅ Found channel: #{channel['name']} (ID: {channel['id']})")
-                return channel['id']
-        
-        print(f"❌ Channel '#{channel_name}' not found")
-        print("Available channels:")
-        for channel in channels[:20]:  # Show first 20 channels
-            print(f"  - #{channel['name']}")
-        if len(channels) > 20:
-            print(f"  ... and {len(channels) - 20} more channels")
+
+    def __init__(self, bot_token: str, channel_name: str, polling_interval: int = 60, max_messages: int = 100):
+        super().__init__(name="slack-source")
+        self.bot_token = bot_token
+        self.channel_name = channel_name.lstrip('#')  # Remove # if present
+        self.polling_interval = polling_interval
+        self.max_messages = max_messages
+        self.client = None
+        self.channel_id = None
+        self.last_timestamp = None
+        self.processed_count = 0
+
+    def _initialize_client(self):
+        """Initialize Slack client and get channel ID."""
+        try:
+            print(f"🔗 Initializing Slack client for channel: #{self.channel_name}")
+            self.client = WebClient(token=self.bot_token)
             
-        return None
-        
-    except SlackApiError as e:
-        print(f"❌ Error getting channel list: {e.response['error']}")
-        return None
+            # Test authentication
+            auth_response = self.client.auth_test()
+            if not auth_response['ok']:
+                raise Exception(f"Authentication failed: {auth_response.get('error', 'Unknown error')}")
+            
+            print(f"✅ Authentication successful - Bot User: {auth_response.get('user', 'Unknown')}")
+            
+            # Get channel ID
+            self.channel_id = self._get_channel_id()
+            if not self.channel_id:
+                raise Exception(f"Channel '#{self.channel_name}' not found or not accessible")
+                
+            print(f"✅ Connected to channel: #{self.channel_name} (ID: {self.channel_id})")
+            
+        except Exception as e:
+            print(f"❌ Failed to initialize Slack client: {str(e)}")
+            raise
 
-def test_slack_connection():
-    """
-    Test connection to Slack and read messages from specified channel.
-    """
-    print("🚀 Starting Slack Connection Test")
-    print("=" * 50)
+    def _get_channel_id(self) -> Optional[str]:
+        """Get channel ID from channel name."""
+        try:
+            response = self.client.conversations_list(
+                types="public_channel,private_channel",
+                limit=1000
+            )
+            
+            channels = response.get('channels', [])
+            for channel in channels:
+                if channel['name'] == self.channel_name:
+                    return channel['id']
+            
+            return None
+            
+        except SlackApiError as e:
+            print(f"❌ Error getting channel list: {e.response['error']}")
+            return None
+
+    def _format_message(self, message: Dict) -> Dict:
+        """
+        Format a Slack message into the expected Kafka message format based on schema.
+        """
+        # Convert timestamp to readable format
+        timestamp = float(message.get('ts', 0))
+        readable_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S') if timestamp else 'Unknown'
+        
+        # Format thread information
+        thread_info = None
+        if message.get('thread_ts'):
+            thread_info = {
+                "has_thread": True,
+                "replies": message.get('reply_count', 0)
+            }
+        
+        # Format files information
+        files = []
+        for file in message.get('files', []):
+            files.append({
+                "name": file.get('name', ''),
+                "type": file.get('mimetype', '')
+            })
+        
+        # Format reactions information
+        reactions = []
+        for reaction in message.get('reactions', []):
+            reactions.append({
+                "reaction": reaction.get('name', ''),
+                "count": reaction.get('count', 0)
+            })
+        
+        # Create the formatted message according to the schema
+        formatted_message = {
+            "id": message.get('ts', ''),
+            "ts": message.get('ts', ''),
+            "time": readable_time,
+            "user_id": message.get('user', ''),
+            "channel_id": self.channel_id,
+            "type": message.get('type', 'message'),
+            "text": message.get('text', ''),
+        }
+        
+        # Add optional fields only if they exist
+        if message.get('subtype'):
+            formatted_message["subtype"] = message.get('subtype')
+            
+        if thread_info:
+            formatted_message["thread"] = thread_info
+            
+        if files:
+            formatted_message["files"] = files
+            
+        if reactions:
+            formatted_message["reactions"] = reactions
+            
+        if message.get('inviter'):
+            formatted_message["inviter"] = message.get('inviter')
+        
+        return formatted_message
+
+    def _fetch_messages(self) -> List[Dict]:
+        """Fetch new messages from the Slack channel."""
+        try:
+            # Build request parameters
+            params = {
+                "channel": self.channel_id,
+                "limit": 100,  # Get up to 100 messages per request
+                "include_all_metadata": True
+            }
+            
+            # Only get messages after the last timestamp we processed
+            if self.last_timestamp:
+                params["oldest"] = self.last_timestamp
+            
+            print(f"📨 Fetching messages from #{self.channel_name}...")
+            
+            response = self.client.conversations_history(**params)
+            
+            if not response['ok']:
+                print(f"❌ Error fetching messages: {response.get('error', 'Unknown error')}")
+                return []
+            
+            messages = response.get('messages', [])
+            
+            # Filter out messages we've already processed
+            if self.last_timestamp:
+                messages = [msg for msg in messages if float(msg.get('ts', 0)) > float(self.last_timestamp)]
+            
+            # Sort messages by timestamp (oldest first)
+            messages.sort(key=lambda x: float(x.get('ts', 0)))
+            
+            print(f"📬 Retrieved {len(messages)} new messages")
+            return messages
+            
+        except SlackApiError as e:
+            print(f"❌ Slack API Error: {e.response.get('error', 'Unknown error')}")
+            return []
+        except Exception as e:
+            print(f"❌ Error fetching messages: {str(e)}")
+            return []
+
+    def run(self):
+        """
+        Main source execution loop. Fetches messages from Slack and produces them to Kafka.
+        """
+        try:
+            # Initialize the Slack client
+            self._initialize_client()
+            
+            print(f"🚀 Starting Slack source for channel #{self.channel_name}")
+            print(f"📊 Max messages to process: {self.max_messages}")
+            print(f"⏱️  Polling interval: {self.polling_interval} seconds")
+            
+            while self.running and self.processed_count < self.max_messages:
+                try:
+                    # Fetch new messages
+                    messages = self._fetch_messages()
+                    
+                    if messages:
+                        print(f"🔄 Processing {len(messages)} messages...")
+                        
+                        for message in messages:
+                            # Check if we should stop
+                            if not self.running or self.processed_count >= self.max_messages:
+                                break
+                                
+                            # Format the message
+                            formatted_message = self._format_message(message)
+                            
+                            # Print raw message structure for debugging (first few messages only)
+                            if self.processed_count < 3:
+                                print(f"🔍 Raw message structure: {json.dumps(message, indent=2, default=str)[:500]}...")
+                                print(f"📝 Formatted message: {json.dumps(formatted_message, indent=2)}")
+                            
+                            # Serialize and produce the message
+                            try:
+                                # Use message ID as key
+                                message_key = formatted_message.get('id', '')
+                                serialized = self.serialize(key=message_key, value=formatted_message)
+                                self.produce(key=serialized.key, value=serialized.value)
+                                
+                                print(f"✅ Produced message {self.processed_count + 1}: {formatted_message['text'][:100]}...")
+                                
+                                # Update tracking
+                                self.last_timestamp = formatted_message['ts']
+                                self.processed_count += 1
+                                
+                            except Exception as e:
+                                print(f"❌ Error producing message: {str(e)}")
+                                continue
+                    else:
+                        print("ℹ️  No new messages found")
+                    
+                    # Check if we've reached the limit
+                    if self.processed_count >= self.max_messages:
+                        print(f"🏁 Reached maximum message limit ({self.max_messages})")
+                        break
+                    
+                    # Wait before next poll
+                    if self.running:
+                        print(f"⏸️  Waiting {self.polling_interval} seconds before next poll...")
+                        time.sleep(self.polling_interval)
+                        
+                except KeyboardInterrupt:
+                    print("⏹️  Stopping due to keyboard interrupt...")
+                    break
+                except Exception as e:
+                    print(f"❌ Error in polling loop: {str(e)}")
+                    if self.running:
+                        print(f"⏸️  Retrying in {self.polling_interval} seconds...")
+                        time.sleep(self.polling_interval)
+            
+            print(f"🏁 Slack source completed. Processed {self.processed_count} messages total.")
+            
+        except Exception as e:
+            print(f"❌ Fatal error in Slack source: {str(e)}")
+            raise
+
+
+def main():
+    """Setup and run the Slack source application."""
+    print("🚀 Starting Slack to Kafka Source Application")
+    print("=" * 60)
     
     # Get environment variables
     bot_token = os.getenv('SLACK_BOT_TOKEN')
     channel_name = os.getenv('CHANNEL_NAME', 'random')
+    output_topic = os.getenv('output', 'slack-data')
+    
+    # Configuration
+    polling_interval = int(os.getenv('POLLING_INTERVAL', '60'))  # seconds
+    max_messages = int(os.getenv('MAX_MESSAGES', '100'))  # limit for testing
     
     if not bot_token:
         print("❌ Error: SLACK_BOT_TOKEN environment variable is required")
         print("   Please set your Slack Bot Token (starts with xoxb-)")
-        return False
+        return
     
     print(f"📝 Configuration:")
     print(f"   Channel: #{channel_name}")
-    print(f"   Bot Token: xoxb-...{bot_token[-8:]}")  # Only show last 8 chars for security
+    print(f"   Output Topic: {output_topic}")
+    print(f"   Polling Interval: {polling_interval} seconds")
+    print(f"   Max Messages (testing): {max_messages}")
+    print(f"   Bot Token: xoxb-...{bot_token[-8:]}")  # Only show last 8 chars
     print()
     
     try:
-        # Initialize Slack client
-        print("🔗 Initializing Slack client...")
-        client = WebClient(token=bot_token)
-        
-        # Test authentication
-        print("🔐 Testing authentication...")
-        auth_response = client.auth_test()
-        
-        if not auth_response['ok']:
-            print(f"❌ Authentication failed: {auth_response.get('error', 'Unknown error')}")
-            return False
-            
-        print(f"✅ Authentication successful!")
-        print(f"   Bot User: {auth_response.get('user', 'Unknown')}")
-        print(f"   Team: {auth_response.get('team', 'Unknown')}")
-        print(f"   User ID: {auth_response.get('user_id', 'Unknown')}")
-        print()
-        
-        # Get channel ID
-        channel_id = get_channel_id(client, channel_name)
-        if not channel_id:
-            return False
-        
-        print()
-        print("📨 Fetching messages...")
-        
-        # Fetch messages from the channel
-        response = client.conversations_history(
-            channel=channel_id,
-            limit=10,  # Get exactly 10 messages as requested
-            include_all_metadata=True
+        # Setup Quix Application
+        app = Application(
+            consumer_group="slack_data_producer",
+            auto_create_topics=True
         )
         
-        if not response['ok']:
-            print(f"❌ Error fetching messages: {response.get('error', 'Unknown error')}")
-            return False
-            
-        messages = response.get('messages', [])
-        print(f"📬 Retrieved {len(messages)} messages from #{channel_name}")
-        print()
+        # Create the Slack source
+        slack_source = SlackSource(
+            bot_token=bot_token,
+            channel_name=channel_name,
+            polling_interval=polling_interval,
+            max_messages=max_messages
+        )
         
-        if not messages:
-            print("ℹ️  No messages found in this channel")
-            return True
+        # Create the output topic
+        topic = app.topic(name=output_topic, value_serializer="json")
         
-        # Display messages
-        print("🔍 MESSAGE SAMPLES:")
-        print("=" * 80)
+        # Add source to application
+        app.add_source(source=slack_source, topic=topic)
         
-        for i, message in enumerate(messages, 1):
-            formatted_msg = format_message(message)
-            
-            print(f"\n📝 Message {i}:")
-            print(f"   ID: {formatted_msg['message_id']}")
-            print(f"   Time: {formatted_msg['readable_time']}")
-            print(f"   User ID: {formatted_msg['user_id']}")
-            print(f"   Type: {formatted_msg['message_type']}")
-            if formatted_msg['subtype']:
-                print(f"   Subtype: {formatted_msg['subtype']}")
-            print(f"   Text: {formatted_msg['text'][:200]}{'...' if len(formatted_msg['text']) > 200 else ''}")
-            
-            if formatted_msg['files']:
-                print(f"   Files: {len(formatted_msg['files'])} file(s)")
-                for file in formatted_msg['files']:
-                    print(f"     - {file['name']} ({file['mimetype']})")
-            
-            if formatted_msg['reactions']:
-                reactions = ', '.join([f"{r['name']}({r['count']})" for r in formatted_msg['reactions']])
-                print(f"   Reactions: {reactions}")
-            
-            if formatted_msg['thread_ts']:
-                print(f"   Thread: Yes (replies: {formatted_msg['reply_count']})")
-                
-            print("-" * 80)
+        print("🎯 Pipeline configured. Starting application...")
+        print("=" * 60)
         
-        # Display data structure summary
-        print("\n📊 DATA STRUCTURE ANALYSIS:")
-        print("=" * 80)
+        # Run the application
+        app.run()
         
-        if messages:
-            sample_message = messages[0]
-            print("🔍 Sample raw message structure:")
-            print(json.dumps(sample_message, indent=2, default=str)[:1000] + "...")
-            
-            print(f"\n📋 Common fields found across messages:")
-            common_fields = set()
-            for msg in messages:
-                common_fields.update(msg.keys())
-            
-            for field in sorted(common_fields):
-                count = sum(1 for msg in messages if field in msg)
-                print(f"   - {field}: present in {count}/{len(messages)} messages")
-        
-        print("\n✅ Connection test completed successfully!")
-        print(f"📊 Summary: Retrieved {len(messages)} messages from #{channel_name}")
-        
-        return True
-        
-    except SlackApiError as e:
-        error_message = e.response.get('error', 'Unknown error')
-        print(f"❌ Slack API Error: {error_message}")
-        
-        if error_message == 'invalid_auth':
-            print("   🔧 Solution: Check your SLACK_BOT_TOKEN is correct and starts with 'xoxb-'")
-        elif error_message == 'channel_not_found':
-            print(f"   🔧 Solution: Channel '#{channel_name}' doesn't exist or bot doesn't have access")
-        elif error_message == 'not_in_channel':
-            print(f"   🔧 Solution: Add your bot to the '#{channel_name}' channel")
-        elif error_message == 'missing_scope':
-            print("   🔧 Solution: Your bot token needs additional OAuth scopes")
-            print("      Required scopes: channels:history, channels:read, groups:history, groups:read")
-        
-        return False
-        
+    except KeyboardInterrupt:
+        print("\n⏹️  Application stopped by user")
     except Exception as e:
-        print(f"❌ Unexpected error: {str(e)}")
-        print(f"   Error type: {type(e).__name__}")
-        return False
+        print(f"\n❌ Application error: {str(e)}")
+        raise
 
-def main():
-    """
-    Main function - runs the connection test.
-    This is a CONNECTION TEST ONLY - not integrated with Quix Streams yet.
-    """
-    print("🔧 SLACK CONNECTION TEST")
-    print("This is a connection test only - no Kafka integration yet")
-    print("=" * 60)
-    
-    success = test_slack_connection()
-    
-    print("\n" + "=" * 60)
-    if success:
-        print("✅ CONNECTION TEST PASSED")
-        print("   Ready for Quix Streams integration!")
-    else:
-        print("❌ CONNECTION TEST FAILED")
-        print("   Please fix the issues above before proceeding.")
-    
-    print("=" * 60)
 
 if __name__ == "__main__":
-    # Load environment variables from .env if available (for local testing)
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-    except ImportError:
-        pass  # dotenv not required in production
-    
     main()
