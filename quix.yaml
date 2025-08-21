@@ -222,3 +222,6 @@ topics:
   - name: openweather-data
     configuration:
       partitions: 1
+  - name: slack-data
+    configuration:
+      partitions: 1
