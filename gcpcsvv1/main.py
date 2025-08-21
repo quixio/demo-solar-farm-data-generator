@@ -232,7 +232,7 @@ def main():
         logger.info("Application configured successfully, starting message processing...")
         
         # Run the application with limits for testing
-        app.run(count=10, timeout=20)
+        app.run()
         
         logger.info("Application completed successfully")
         
