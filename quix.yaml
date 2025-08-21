@@ -226,3 +226,6 @@ topics:
   - name: gcp-output
     configuration:
       partitions: 1
+  - name: opensky-data
+    configuration:
+      partitions: 1
