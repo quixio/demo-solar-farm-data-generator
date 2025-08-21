@@ -1,17 +1,28 @@
 name: openskyv1
 language: python
 variables:
-  - name: output
-    inputType: OutputTopic
-    description: Name of the output topic to write into
-    defaultValue: csv-data
-    required: true
-  - name: OPENSKY_USERNAME
-    inputType: FreeText
-  - name: OPENSKY_PASSWORD
-    inputType: FreeText
-  - name: AIRPORT_ICAO
-    inputType: FreeText
+- name: output
+  inputType: OutputTopic
+  description: Name of the output topic to write into
+  defaultValue: opensky-data
+  required: true
+- name: OPENSKY_USERNAME
+  inputType: FreeText
+  description: OpenSky Network username (optional - leave empty for anonymous access
+    with limited functionality)
+  defaultValue: mc2568
+  required: false
+- name: OPENSKY_PASSWORD
+  inputType: Secret
+  description: OpenSky Network password (optional - leave empty for anonymous access
+    with limited functionality)
+  defaultValue: OPENSKY_PWD_KEY
+  required: false
+- name: AIRPORT_ICAO
+  inputType: FreeText
+  description: ICAO code of the airport to get departures from
+  defaultValue: EDDB
+  required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
