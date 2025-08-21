@@ -5,13 +5,23 @@ from quixstreams import Application
 from quixstreams.sources import Source
 
 import os
+import json
+import time
+from datetime import datetime
+import threading
 
-# for local dev, you can load env vars from a .env file
-# from dotenv import load_dotenv
-# load_dotenv()
+# Import websocket-client library
+try:
+    import websocket
+    # Verify we have the correct websocket-client library
+    if not hasattr(websocket, 'WebSocketApp'):
+        raise ImportError("Wrong websocket module - need websocket-client package")
+except ImportError as e:
+    print(f"❌ Error importing websocket library: {e}")
+    print("Please ensure 'websocket-client' package is installed")
+    raise
 
-
-class MemoryUsageGenerator(Source):
+def test_blockchain_websocket_connection():
     """
     A Quix Streams Source enables Applications to read data from something other
     than Kafka and publish it to a desired Kafka topic.
@@ -56,31 +66,92 @@ class MemoryUsageGenerator(Source):
             except StopIteration:
                 print("Source finished producing messages.")
                 return
-
+            
+            # Send subscription message
+            ws.send(json.dumps(subscription_message))
+            print("✅ Subscription message sent successfully!")
+            print("Waiting for messages...\n")
+            
+        except Exception as e:
+            print(f"❌ Error sending subscription: {e}")
+            ws.close()
+    
+    try:
+        # Create WebSocket connection
+        print("🔄 Attempting to connect to blockchain.com WebSocket...")
+        
+        # Enable WebSocket debug traces for troubleshooting (if available)
+        try:
+            websocket.enableTrace(False)  # Set to True for detailed debugging
+        except AttributeError as e:
+            # enableTrace might not be available in some websocket implementations
+            print(f"Note: WebSocket debug tracing not available - {e}")
+            print("This is not critical for the connection test")
+        
+        ws = websocket.WebSocketApp(
+            websocket_url,
+            on_open=on_open,
+            on_message=on_message,
+            on_error=on_error,
+            on_close=on_close
+        )
+        
+        # Set a timeout for the connection
+        def timeout_handler():
+            time.sleep(30)  # 30 second timeout
+            if message_count == 0:
+                print("\n⏱️ Timeout: No messages received within 30 seconds")
+                print("This might be normal if there are no new transactions")
+                ws.close()
+        
+        timeout_thread = threading.Thread(target=timeout_handler)
+        timeout_thread.daemon = True
+        timeout_thread.start()
+        
+        # Run the WebSocket connection
+        ws.run_forever()
+        
+        if not connection_successful:
+            print("\n❌ Failed to establish WebSocket connection")
+            return False
+            
+        return message_count > 0
+        
+    except Exception as e:
+        print(f"\n❌ Connection Error: {e}")
+        print("Please check your internet connection and try again.")
+        return False
 
 def main():
-    """ Here we will set up our Application. """
-
-    # Setup necessary objects
-    app = Application(consumer_group="data_producer", auto_create_topics=True)
-    memory_usage_source = MemoryUsageGenerator(name="memory-usage-producer")
-    output_topic = app.topic(name=os.environ["output"])
-
-    # --- Setup Source ---
-    # OPTION 1: no additional processing with a StreamingDataFrame
-    # Generally the recommended approach; no additional operations needed!
-    app.add_source(source=memory_usage_source, topic=output_topic)
-
-    # OPTION 2: additional processing with a StreamingDataFrame
-    # Useful for consolidating additional data cleanup into 1 Application.
-    # In this case, do NOT use `app.add_source()`.
-    # sdf = app.dataframe(source=source)
-    # <sdf operations here>
-    # sdf.to_topic(topic=output_topic) # you must do this to output your data!
-
-    # With our pipeline defined, now run the Application
-    app.run()
-
+    """
+    Main function for testing blockchain.com WebSocket connection.
+    This is a connection test only - no Quix Streams integration yet.
+    """
+    print("Starting blockchain.com WebSocket connection test...")
+    
+    # Verify websocket-client installation
+    print("Checking websocket-client library...")
+    try:
+        print(f"✅ WebSocket library version: {websocket.__version__ if hasattr(websocket, '__version__') else 'unknown'}")
+        print(f"✅ WebSocketApp available: {'Yes' if hasattr(websocket, 'WebSocketApp') else 'No'}")
+        print(f"✅ enableTrace available: {'Yes' if hasattr(websocket, 'enableTrace') else 'No'}")
+    except Exception as e:
+        print(f"❌ Error checking websocket library: {e}")
+    
+    try:
+        success = test_blockchain_websocket_connection()
+        
+        if success:
+            print("\n🎉 Connection test completed successfully!")
+            print("The blockchain.com WebSocket API is accessible and returning data.")
+        else:
+            print("\n❌ Connection test failed!")
+            print("Please check the configuration and try again.")
+            
+    except KeyboardInterrupt:
+        print("\n\n⚠️ Test interrupted by user")
+    except Exception as e:
+        print(f"\n❌ Unexpected error during test: {e}")
 
 #  Sources require execution under a conditional main
 if __name__ == "__main__":
