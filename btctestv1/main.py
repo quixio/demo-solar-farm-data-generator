@@ -1,230 +1,308 @@
-# import the Quix Streams modules for interacting with Kafka.
-# For general info, see https://quix.io/docs/quix-streams/introduction.html
-# For sources, see https://quix.io/docs/quix-streams/connectors/sources/index.html
-from quixstreams import Application
-from quixstreams.sources import Source
+"""
+Bitcoin Transaction Data Connection Test
 
-import os
+This script tests the connection to blockchain.com WebSocket API to read live Bitcoin 
+transaction data. This is a connection test only - no Kafka integration yet.
+
+The script will:
+1. Connect to blockchain.com WebSocket API
+2. Subscribe to unconfirmed Bitcoin transactions
+3. Collect exactly 10 sample transactions
+4. Display formatted transaction data for inspection
+5. Handle connection errors gracefully
+"""
+
+import asyncio
 import json
+import os
+import sys
 import time
-import websocket
-from typing import Dict, Any, Optional
+from datetime import datetime
+from typing import Dict, List, Optional
+
+import websockets
+from websockets.exceptions import ConnectionClosed, WebSocketException
+
+# for local dev, you can load env vars from a .env file
+# from dotenv import load_dotenv
+# load_dotenv()
 
 
-class MemoryUsageGenerator(Source):
+class BitcoinTransactionTester:
     """
-    A connection tester for blockchain.com WebSocket API.
-    Tests the ability to connect and read Bitcoin transaction data.
+    Connection tester for blockchain.com WebSocket API to fetch Bitcoin transaction data.
     
-    This is for connection testing only - no Kafka integration yet.
+    This class handles:
+    - WebSocket connection to blockchain.com
+    - Subscription management for unconfirmed transactions
+    - Data collection and formatting
+    - Error handling and retries
     """
     
-    def __init__(self, ws_url: str, subscription_type: str, bitcoin_address: Optional[str] = None):
-        self.ws_url = ws_url
-        self.subscription_type = subscription_type
-        self.bitcoin_address = bitcoin_address
-        self.connection_established = False
-        self.sample_count = 0
-        self.max_samples = 10
-        self.samples_collected = []
-        
-    def on_open(self, ws):
-        """Called when WebSocket connection is opened."""
-        print("✅ WebSocket connection established successfully!")
-        print(f"Connected to: {self.ws_url}")
-        self.connection_established = True
-        
-        # Subscribe based on subscription type
-        if self.subscription_type == "unconfirmed_sub":
-            subscription_message = {"op": "unconfirmed_sub"}
-            print("📡 Subscribing to all unconfirmed Bitcoin transactions...")
-        elif self.subscription_type == "addr_sub" and self.bitcoin_address:
-            subscription_message = {"op": "addr_sub", "addr": self.bitcoin_address}
-            print(f"📡 Subscribing to transactions for address: {self.bitcoin_address}")
-        else:
-            print("❌ Invalid subscription type or missing Bitcoin address")
-            ws.close()
-            return
-            
-        ws.send(json.dumps(subscription_message))
-        print(f"Subscription message sent: {subscription_message}")
-        
-    def on_message(self, ws, message):
-        """Called when a message is received from WebSocket."""
-        try:
-            data = json.loads(message)
-            self.sample_count += 1
-            
-            print(f"\n📦 Sample {self.sample_count}/10 - New Transaction Data:")
-            print("=" * 60)
-            
-            if data.get("op") == "utx" and "x" in data:
-                transaction = data["x"]
-                self.samples_collected.append(transaction)
-                
-                # Format and display key transaction information
-                print(f"Transaction Hash: {transaction.get('hash', 'N/A')}")
-                print(f"Transaction Index: {transaction.get('tx_index', 'N/A')}")
-                print(f"Size: {transaction.get('size', 'N/A')} bytes")
-                print(f"Version: {transaction.get('ver', 'N/A')}")
-                print(f"Lock Time: {transaction.get('lock_time', 'N/A')}")
-                print(f"Timestamp: {transaction.get('time', 'N/A')}")
-                print(f"Relayed By: {transaction.get('relayed_by', 'N/A')}")
-                
-                # Input information
-                inputs = transaction.get('inputs', [])
-                print(f"Inputs ({len(inputs)}):")
-                for i, inp in enumerate(inputs[:2]):  # Show first 2 inputs
-                    prev_out = inp.get('prev_out', {})
-                    print(f"  Input {i+1}: {prev_out.get('addr', 'N/A')} -> {prev_out.get('value', 0)/100000000:.8f} BTC")
-                
-                # Output information
-                outputs = transaction.get('out', [])
-                print(f"Outputs ({len(outputs)}):")
-                for i, out in enumerate(outputs[:2]):  # Show first 2 outputs
-                    print(f"  Output {i+1}: {out.get('addr', 'N/A')} -> {out.get('value', 0)/100000000:.8f} BTC")
-                
-                total_value = sum(out.get('value', 0) for out in outputs)
-                print(f"Total Transaction Value: {total_value/100000000:.8f} BTC")
-                
-            else:
-                # Handle other message types (blocks, etc.)
-                print(f"Message Type: {data.get('op', 'unknown')}")
-                print(f"Raw Data: {json.dumps(data, indent=2)[:500]}...")
-                self.samples_collected.append(data)
-                
-            print("=" * 60)
-            
-            # Stop after collecting the desired number of samples
-            if self.sample_count >= self.max_samples:
-                print(f"\n🎉 Successfully collected {self.max_samples} samples!")
-                print("\n📊 Connection Test Summary:")
-                print(f"   • WebSocket URL: {self.ws_url}")
-                print(f"   • Subscription Type: {self.subscription_type}")
-                if self.bitcoin_address:
-                    print(f"   • Bitcoin Address: {self.bitcoin_address}")
-                print(f"   • Samples Collected: {len(self.samples_collected)}")
-                print("   • Connection Status: ✅ SUCCESS")
-                
-                ws.close()
-                
-        except json.JSONDecodeError as e:
-            print(f"❌ Error parsing JSON message: {e}")
-            print(f"Raw message: {message}")
-        except Exception as e:
-            print(f"❌ Error processing message: {e}")
-            
-    def on_error(self, ws, error):
-        """Called when an error occurs."""
-        print(f"❌ WebSocket Error: {error}")
-        
-    def on_close(self, ws, close_status_code, close_msg):
-        """Called when WebSocket connection is closed."""
-        print(f"\n🔌 WebSocket connection closed")
-        if close_status_code:
-            print(f"   Status Code: {close_status_code}")
-        if close_msg:
-            print(f"   Message: {close_msg}")
-            
-        if self.connection_established:
-            print("✅ Connection test completed successfully!")
-        else:
-            print("❌ Connection test failed - could not establish connection")
-            
-    def test_connection(self, timeout: int = 30):
+    def __init__(self, max_transactions: int = 10):
         """
-        Test the WebSocket connection and collect sample data.
+        Initialize the Bitcoin transaction tester.
         
         Args:
-            timeout: Maximum time to wait for samples (seconds)
+            max_transactions: Maximum number of transactions to collect for testing
         """
-        print("🚀 Starting Blockchain.com WebSocket Connection Test")
-        print(f"Target: {self.ws_url}")
-        print(f"Subscription: {self.subscription_type}")
-        if self.bitcoin_address:
-            print(f"Bitcoin Address: {self.bitcoin_address}")
-        print(f"Collecting {self.max_samples} sample transactions...\n")
+        self.websocket_url = "wss://ws.blockchain.info/inv"
+        self.max_transactions = max_transactions
+        self.collected_transactions: List[Dict] = []
+        self.api_key = os.environ.get("API_KEY")  # Optional API key
+        
+    async def connect_and_test(self) -> bool:
+        """
+        Main method to connect to blockchain.com and test data retrieval.
+        
+        Returns:
+            bool: True if connection test succeeded, False otherwise
+        """
+        print("=" * 60)
+        print("🔗 Bitcoin Transaction Data Connection Test")
+        print("=" * 60)
+        print(f"📡 Connecting to: {self.websocket_url}")
+        print(f"🎯 Target sample size: {self.max_transactions} transactions")
+        print(f"⏰ Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        max_retries = 3
+        retry_delay = 5
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                print(f"\n🔄 Connection attempt {attempt}/{max_retries}...")
+                success = await self._attempt_connection()
+                
+                if success:
+                    print("\n✅ Connection test completed successfully!")
+                    self._print_summary()
+                    return True
+                    
+            except Exception as e:
+                print(f"❌ Attempt {attempt} failed: {str(e)}")
+                
+                if attempt < max_retries:
+                    print(f"⏳ Retrying in {retry_delay} seconds...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    print("🚫 All connection attempts failed!")
+                    self._print_troubleshooting_info()
+                    
+        return False
+    
+    async def _attempt_connection(self) -> bool:
+        """
+        Attempt to connect to blockchain.com WebSocket and collect sample data.
+        
+        Returns:
+            bool: True if data collection succeeded
+        """
+        timeout_seconds = 60  # Maximum wait time for collecting samples
         
         try:
-            # Configure WebSocket
-            ws = websocket.WebSocketApp(
-                self.ws_url,
-                on_open=self.on_open,
-                on_message=self.on_message,
-                on_error=self.on_error,
-                on_close=self.on_close
-            )
-            
-            # Run WebSocket with timeout
-            ws.run_forever()
-            
-        except Exception as e:
-            print(f"❌ Connection failed: {e}")
-            print("\n🔍 Troubleshooting Tips:")
-            print("   • Check internet connection")
-            print("   • Verify WebSocket URL is correct")
-            print("   • Ensure firewall allows WebSocket connections")
+            # Connect to WebSocket with timeout
+            async with websockets.connect(
+                self.websocket_url,
+                ping_interval=20,
+                ping_timeout=10,
+                close_timeout=10
+            ) as websocket:
+                
+                print("✅ WebSocket connection established")
+                
+                # Subscribe to unconfirmed transactions
+                subscribe_message = {"op": "unconfirmed_sub"}
+                await websocket.send(json.dumps(subscribe_message))
+                print("📋 Subscribed to unconfirmed transactions")
+                
+                # Collect sample transactions
+                start_time = time.time()
+                
+                while len(self.collected_transactions) < self.max_transactions:
+                    # Check for timeout
+                    if time.time() - start_time > timeout_seconds:
+                        print(f"⏰ Timeout after {timeout_seconds} seconds")
+                        break
+                        
+                    try:
+                        # Wait for message with timeout
+                        message = await asyncio.wait_for(
+                            websocket.recv(), 
+                            timeout=10.0
+                        )
+                        
+                        await self._process_message(message)
+                        
+                    except asyncio.TimeoutError:
+                        print("⏳ No new transactions in last 10 seconds, continuing to wait...")
+                        continue
+                
+                # Unsubscribe before closing
+                unsubscribe_message = {"op": "unconfirmed_unsub"}
+                await websocket.send(json.dumps(unsubscribe_message))
+                print("📋 Unsubscribed from transactions")
+                
+                return len(self.collected_transactions) > 0
+                
+        except ConnectionClosed:
+            print("❌ WebSocket connection closed unexpectedly")
             return False
+        except WebSocketException as e:
+            print(f"❌ WebSocket error: {str(e)}")
+            return False
+        except Exception as e:
+            print(f"❌ Unexpected error: {str(e)}")
+            return False
+    
+    async def _process_message(self, message: str) -> None:
+        """
+        Process incoming WebSocket message and extract transaction data.
+        
+        Args:
+            message: Raw message from WebSocket
+        """
+        try:
+            data = json.loads(message)
             
-        return True
+            # Check if this is a transaction message
+            if data.get("op") == "utx" and "x" in data:
+                transaction = data["x"]
+                
+                # Extract and format transaction data
+                formatted_tx = self._format_transaction(transaction)
+                self.collected_transactions.append(formatted_tx)
+                
+                tx_count = len(self.collected_transactions)
+                print(f"📥 Transaction {tx_count}/{self.max_transactions} collected: {formatted_tx['hash'][:16]}...")
+                
+                # Print detailed info for first few transactions
+                if tx_count <= 3:
+                    self._print_transaction_details(formatted_tx)
+                    
+        except json.JSONDecodeError:
+            print("⚠️ Received invalid JSON message, skipping...")
+        except Exception as e:
+            print(f"⚠️ Error processing message: {str(e)}")
+    
+    def _format_transaction(self, raw_tx: Dict) -> Dict:
+        """
+        Format raw transaction data into a structured format.
+        
+        Args:
+            raw_tx: Raw transaction data from blockchain.com
+            
+        Returns:
+            Dict: Formatted transaction data
+        """
+        return {
+            "hash": raw_tx.get("hash", ""),
+            "time": raw_tx.get("time", 0),
+            "timestamp": datetime.fromtimestamp(raw_tx.get("time", 0)).isoformat() if raw_tx.get("time") else "",
+            "size": raw_tx.get("size", 0),
+            "fee": raw_tx.get("fee", 0),
+            "input_count": raw_tx.get("vin_sz", 0),
+            "output_count": raw_tx.get("vout_sz", 0),
+            "total_input_value": sum(
+                inp.get("prev_out", {}).get("value", 0) 
+                for inp in raw_tx.get("inputs", [])
+            ),
+            "total_output_value": sum(
+                out.get("value", 0) 
+                for out in raw_tx.get("out", [])
+            ),
+            "addresses": {
+                "inputs": [
+                    inp.get("prev_out", {}).get("addr")
+                    for inp in raw_tx.get("inputs", [])
+                    if inp.get("prev_out", {}).get("addr")
+                ],
+                "outputs": [
+                    out.get("addr")
+                    for out in raw_tx.get("out", [])
+                    if out.get("addr")
+                ]
+            },
+            "relayed_by": raw_tx.get("relayed_by", ""),
+            "raw_data": raw_tx  # Keep original for reference
+        }
+    
+    def _print_transaction_details(self, tx: Dict) -> None:
+        """
+        Print detailed transaction information.
+        
+        Args:
+            tx: Formatted transaction data
+        """
+        print(f"  📍 Hash: {tx['hash']}")
+        print(f"  ⏰ Time: {tx['timestamp']}")
+        print(f"  💰 Total Value: {tx['total_output_value']/100000000:.8f} BTC")
+        print(f"  📊 Size: {tx['size']} bytes")
+        print(f"  🔗 Inputs: {tx['input_count']} | Outputs: {tx['output_count']}")
+        print(f"  🌐 Relayed by: {tx['relayed_by']}")
+        print()
+    
+    def _print_summary(self) -> None:
+        """Print summary of collected transaction data."""
+        print("\n" + "=" * 60)
+        print("📊 CONNECTION TEST SUMMARY")
+        print("=" * 60)
+        print(f"✅ Successfully collected: {len(self.collected_transactions)} transactions")
+        
+        if self.collected_transactions:
+            total_value = sum(tx['total_output_value'] for tx in self.collected_transactions)
+            avg_size = sum(tx['size'] for tx in self.collected_transactions) / len(self.collected_transactions)
+            
+            print(f"💰 Total BTC value observed: {total_value/100000000:.8f} BTC")
+            print(f"📊 Average transaction size: {avg_size:.1f} bytes")
+            print(f"🔗 Total unique input addresses: {len(set(addr for tx in self.collected_transactions for addr in tx['addresses']['inputs']))}")
+            print(f"🔗 Total unique output addresses: {len(set(addr for tx in self.collected_transactions for addr in tx['addresses']['outputs']))}")
+            
+            print("\n📋 Sample Transaction Hashes:")
+            for i, tx in enumerate(self.collected_transactions[:5], 1):
+                print(f"  {i}. {tx['hash']}")
+            
+            if len(self.collected_transactions) > 5:
+                print(f"  ... and {len(self.collected_transactions) - 5} more")
+                
+        print("\n🎯 Next Steps:")
+        print("  • Connection to blockchain.com WebSocket API is working")
+        print("  • Transaction data structure has been analyzed")
+        print("  • Ready for Kafka integration in next phase")
+        print("  • Data schema can be inferred from collected samples")
+    
+    def _print_troubleshooting_info(self) -> None:
+        """Print troubleshooting information for failed connections."""
+        print("\n" + "=" * 60)
+        print("🔧 TROUBLESHOOTING INFORMATION")
+        print("=" * 60)
+        print("Common issues and solutions:")
+        print("• Network connectivity: Check internet connection")
+        print("• Firewall: Ensure WebSocket connections are allowed")
+        print("• API limits: blockchain.com may have rate limits")
+        print("• Service status: Check blockchain.com service status")
+        print("\nFor more help, visit: https://www.blockchain.com/api")
 
 
 def main():
-    """Main function to run the blockchain.com WebSocket connection test."""
-    
-    # Load configuration from environment variables
-    ws_url = os.environ.get("BLOCKCHAIN_WS_URL", "wss://ws.blockchain.info/inv")
-    subscription_type = os.environ.get("SUBSCRIPTION_TYPE", "unconfirmed_sub")
-    bitcoin_address = os.environ.get("BITCOIN_ADDRESS", "").strip()
-    
-    # Validate configuration
-    if subscription_type == "addr_sub" and not bitcoin_address:
-        print("❌ Error: BITCOIN_ADDRESS is required when SUBSCRIPTION_TYPE is 'addr_sub'")
-        print("Please set the BITCOIN_ADDRESS environment variable to a valid Bitcoin address.")
-        return
+    """Main function to run the Bitcoin transaction connection test."""
+    try:
+        # Create tester instance
+        tester = BitcoinTransactionTester(max_transactions=10)
         
-    if subscription_type not in ["unconfirmed_sub", "addr_sub"]:
-        print(f"❌ Error: Invalid SUBSCRIPTION_TYPE '{subscription_type}'")
-        print("Valid options: 'unconfirmed_sub' or 'addr_sub'")
-        return
-    
-    # Create and run the tester
-    tester = BlockchainWebSocketTester(
-        ws_url=ws_url,
-        subscription_type=subscription_type,
-        bitcoin_address=bitcoin_address if bitcoin_address else None
-    )
-    
-    # Run the connection test
-    success = tester.test_connection(timeout=30)
-    
-    if success and len(tester.samples_collected) > 0:
-        print("\n🎯 Connection Test Results:")
-        print("   ✅ Successfully connected to blockchain.com WebSocket")
-        print("   ✅ Successfully subscribed to Bitcoin transaction stream")
-        print("   ✅ Successfully received and parsed transaction data")
-        print(f"   ✅ Collected {len(tester.samples_collected)} sample transactions")
-        print("\n📋 Sample Data Structure Analysis:")
+        # Run the connection test
+        success = asyncio.run(tester.connect_and_test())
         
-        if tester.samples_collected:
-            sample = tester.samples_collected[0]
-            if isinstance(sample, dict):
-                print("   Key fields found in transaction data:")
-                for key in sorted(sample.keys()):
-                    value = sample[key]
-                    value_type = type(value).__name__
-                    if isinstance(value, list):
-                        value_info = f"list with {len(value)} items"
-                    elif isinstance(value, dict):
-                        value_info = f"dict with keys: {list(value.keys())[:3]}..."
-                    else:
-                        value_info = f"{value_type}: {str(value)[:50]}..."
-                    print(f"     • {key}: {value_info}")
-    else:
-        print("\n❌ Connection test failed or no data received")
-        print("Please check the error messages above for troubleshooting information")
+        # Exit with appropriate code
+        sys.exit(0 if success else 1)
+        
+    except KeyboardInterrupt:
+        print("\n🛑 Test interrupted by user")
+        sys.exit(130)
+    except Exception as e:
+        print(f"\n💥 Unexpected error: {str(e)}")
+        sys.exit(1)
 
 
-#  Sources require execution under a conditional main
 if __name__ == "__main__":
     main()
