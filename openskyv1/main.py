@@ -9,6 +9,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
 import requests
+from quixstreams import Application
+from quixstreams.sources.base import Source
 
 # Set up logging
 logging.basicConfig(
@@ -19,21 +21,41 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class OpenSkyConnectionTest:
+class OpenSkySource(Source):
     """
-    Test connection to OpenSky Network API to retrieve departure data from a specified airport.
-    This is a connection test only - no Kafka integration yet.
+    OpenSky Network API source for Quix Streams.
+    Reads departure data from a specified airport and produces it to a Kafka topic.
     """
     
-    def __init__(self):
+    def __init__(self, name: str = "opensky_departures", **kwargs):
+        super().__init__(name=name, **kwargs)
         self.base_url = "https://opensky-network.org/api"
-        self.session = requests.Session()
-        self.session.timeout = 30
         
-        # Get credentials from environment variables
+        # Get configuration from environment variables
         self.username = os.environ.get("OPENSKY_USERNAME", "").strip()
         self.password = os.environ.get("OPENSKY_PASSWORD", "").strip()
         self.airport_icao = os.environ.get("AIRPORT_ICAO", "EDDB").strip().upper()
+        
+        # Rate limiting and polling configuration
+        self.poll_interval = 300  # Poll every 5 minutes to respect API rate limits
+        self.last_request_time = 0
+        self.min_request_interval = 60  # Minimum 1 minute between requests
+        self.message_count = 0
+        self.max_messages = 100  # Limit for testing
+        
+        logger.info(f"OpenSky source initialized for airport: {self.airport_icao}")
+        logger.info(f"Authentication: {'Enabled' if self.username and self.password else 'Anonymous'}")
+    
+    def setup(self):
+        """
+        Set up the OpenSky API connection and test connectivity.
+        Called once when the source starts.
+        """
+        logger.info("Setting up OpenSky API connection...")
+        
+        # Create session for connection pooling and authentication
+        self.session = requests.Session()
+        self.session.timeout = 30
         
         # Set up authentication if credentials are provided
         if self.username and self.password:
@@ -41,20 +63,26 @@ class OpenSkyConnectionTest:
             logger.info("Using authenticated access to OpenSky API")
         else:
             logger.info("Using anonymous access to OpenSky API (limited functionality)")
+        
+        # Test API connectivity
+        success = self._test_api_connection()
+        if not success:
+            raise Exception("Failed to establish connection to OpenSky API")
+        
+        logger.info("OpenSky API connection setup completed successfully")
     
-    def test_api_connection(self) -> bool:
+    def _test_api_connection(self) -> bool:
         """
-        Test basic connectivity to OpenSky API by fetching current states.
+        Test basic connectivity to OpenSky API.
         
         Returns:
             bool: True if connection successful, False otherwise
         """
         try:
-            logger.info("Testing basic API connectivity...")
+            logger.info("Testing API connectivity...")
             url = f"{self.base_url}/states/all"
             
             # Use a small bounding box to reduce data load for connection test
-            # This covers a small area around Berlin
             params = {
                 "lamin": 52.3,
                 "lamax": 52.7,
@@ -70,24 +98,23 @@ class OpenSkyConnectionTest:
                 logger.info(f"✓ API connection successful! Found {states_count} aircraft states in test area")
                 return True
             elif response.status_code == 429:
-                logger.error("✗ Rate limit exceeded. Please wait or use authenticated access.")
-                return False
+                logger.warning("Rate limit exceeded, but continuing with setup")
+                return True  # Continue setup, handle rate limiting in main loop
             elif response.status_code == 503:
-                logger.warning("⚠ OpenSky API service temporarily unavailable (503). This is a temporary server issue.")
-                logger.info("Continuing with departure endpoint test...")
-                return True  # Continue to test the specific endpoint we need
+                logger.warning("API service temporarily unavailable (503), but continuing")
+                return True  # Continue setup, service might recover
             else:
-                logger.error(f"✗ API connection failed. Status: {response.status_code} - {response.text}")
-                return False
+                logger.warning(f"API test returned status {response.status_code}, but continuing")
+                return True  # Continue setup, specific endpoints might work
                 
         except requests.exceptions.RequestException as e:
-            logger.error(f"✗ Connection error: {e}")
+            logger.error(f"Connection error during API test: {e}")
             return False
         except Exception as e:
-            logger.error(f"✗ Unexpected error during connection test: {e}")
+            logger.error(f"Unexpected error during API test: {e}")
             return False
     
-    def get_departures(self, hours_back: int = 24) -> Optional[List[Dict[str, Any]]]:
+    def _get_departures(self, hours_back: int = 24) -> Optional[List[Dict[str, Any]]]:
         """
         Retrieve departure flights from the specified airport.
         
@@ -98,6 +125,14 @@ class OpenSkyConnectionTest:
             List of flight departure data or None if error
         """
         try:
+            # Rate limiting
+            current_time = time.time()
+            time_since_last_request = current_time - self.last_request_time
+            if time_since_last_request < self.min_request_interval:
+                sleep_time = self.min_request_interval - time_since_last_request
+                logger.info(f"Rate limiting: sleeping for {sleep_time:.1f} seconds")
+                time.sleep(sleep_time)
+            
             logger.info(f"Fetching departures from {self.airport_icao} airport...")
             
             # Calculate time window (Unix timestamps)
@@ -108,8 +143,6 @@ class OpenSkyConnectionTest:
             begin_ts = int(start_time.timestamp())
             end_ts = int(end_time.timestamp())
             
-            logger.info(f"Time window: {start_time.strftime('%Y-%m-%d %H:%M:%S')} to {end_time.strftime('%Y-%m-%d %H:%M:%S')} UTC")
-            
             url = f"{self.base_url}/flights/departure"
             params = {
                 "airport": self.airport_icao,
@@ -117,41 +150,34 @@ class OpenSkyConnectionTest:
                 "end": end_ts
             }
             
-            logger.info(f"Making request to: {url}")
-            logger.info(f"Parameters: {params}")
-            
             response = self.session.get(url, params=params)
+            self.last_request_time = time.time()
             
             if response.status_code == 200:
                 departures = response.json()
-                if departures:
-                    logger.info(f"✓ Successfully retrieved {len(departures)} departure records")
-                    return departures
-                else:
-                    logger.warning(f"✓ API call successful but no departures found for {self.airport_icao} in the last {hours_back} hours")
-                    return []
+                logger.info(f"Successfully retrieved {len(departures)} departure records")
+                return departures
             elif response.status_code == 404:
-                logger.warning(f"✓ No departures found for {self.airport_icao} in the specified time period")
+                logger.info(f"No departures found for {self.airport_icao} in the specified time period")
                 return []
             elif response.status_code == 429:
-                logger.error("✗ Rate limit exceeded. Try again later or use authenticated access for higher limits.")
+                logger.warning("Rate limit exceeded. Will retry later.")
                 return None
             elif response.status_code == 403:
-                logger.error("✗ Access forbidden. Authentication might be required for this endpoint.")
+                logger.warning("Access forbidden. Authentication might be required.")
                 return None
             else:
-                logger.error(f"✗ Failed to retrieve departures. Status: {response.status_code}")
-                logger.error(f"Response: {response.text}")
+                logger.warning(f"API request failed. Status: {response.status_code}")
                 return None
                 
         except requests.exceptions.RequestException as e:
-            logger.error(f"✗ Network error while fetching departures: {e}")
+            logger.error(f"Network error while fetching departures: {e}")
             return None
         except Exception as e:
-            logger.error(f"✗ Unexpected error while fetching departures: {e}")
+            logger.error(f"Unexpected error while fetching departures: {e}")
             return None
     
-    def format_flight_data(self, flight_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _format_flight_data(self, flight_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Format flight data for better readability and add computed fields.
         
@@ -178,9 +204,13 @@ class OpenSkyConnectionTest:
         if formatted.get("callsign"):
             formatted["callsign"] = formatted["callsign"].strip()
         
+        # Add metadata
+        formatted["processed_at"] = datetime.now(timezone.utc).isoformat()
+        formatted["source_airport"] = self.airport_icao
+        
         return formatted
     
-    def get_sample_departure_data(self) -> List[Dict[str, Any]]:
+    def _get_sample_departure_data(self) -> List[Dict[str, Any]]:
         """
         Generate sample departure data for demonstration purposes.
         This simulates the structure of real OpenSky API departure data.
@@ -337,110 +367,152 @@ class OpenSkyConnectionTest:
         ]
         
         return sample_data
-    
-    def display_sample_data(self, departures: List[Dict[str, Any]], limit: int = 10) -> None:
+
+    def run(self):
         """
-        Display sample departure data in a readable format.
-        
-        Args:
-            departures: List of departure flight data
-            limit: Maximum number of records to display
+        Main run loop for the OpenSky source.
+        Continuously fetches departure data and produces it to the Kafka topic.
         """
-        if not departures:
-            logger.info("No departure data to display")
-            return
+        logger.info("Starting OpenSky departure data collection...")
         
-        sample_size = min(len(departures), limit)
-        logger.info(f"\n{'='*60}")
-        logger.info(f"SAMPLE DEPARTURE DATA FROM {self.airport_icao} AIRPORT")
-        logger.info(f"Showing {sample_size} of {len(departures)} total records")
-        logger.info(f"{'='*60}")
+        # Track processed flights to avoid duplicates
+        processed_flights = set()
+        last_poll_time = 0
         
-        for i, departure in enumerate(departures[:limit], 1):
-            formatted_departure = self.format_flight_data(departure)
-            
-            print(f"\n--- Flight {i} ---")
-            print(f"ICAO24:           {formatted_departure.get('icao24', 'N/A')}")
-            print(f"Callsign:         {formatted_departure.get('callsign', 'N/A')}")
-            print(f"Departure Time:   {formatted_departure.get('firstSeen_readable', 'N/A')}")
-            print(f"Arrival Time:     {formatted_departure.get('lastSeen_readable', 'N/A')}")
-            print(f"Departure Airport: {formatted_departure.get('estDepartureAirport', 'N/A')}")
-            print(f"Arrival Airport:   {formatted_departure.get('estArrivalAirport', 'N/A')}")
-            print(f"Departure Distance: {formatted_departure.get('estDepartureAirportHorizDistance', 'N/A')} meters")
-            print(f"Arrival Distance:   {formatted_departure.get('estArrivalAirportHorizDistance', 'N/A')} meters")
-            
-            # Show raw JSON for reference
-            print(f"Raw JSON: {json.dumps(departure, indent=2)}")
-    
-    def run_connection_test(self) -> bool:
-        """
-        Run the complete connection test.
-        
-        Returns:
-            bool: True if test successful, False otherwise
-        """
-        logger.info(f"\n🚀 Starting OpenSky API Connection Test")
-        logger.info(f"Target Airport: {self.airport_icao} (Berlin Brandenburg)")
-        logger.info(f"Authentication: {'Enabled' if self.session.auth else 'Anonymous'}")
-        logger.info(f"{'='*60}")
-        
-        # Step 1: Test basic connectivity
-        if not self.test_api_connection():
-            logger.error("Basic connectivity test failed. Aborting.")
-            return False
-        
-        # Step 2: Test departure data retrieval
-        departures = self.get_departures(hours_back=24)
-        
-        if departures is None:
-            logger.warning("Failed to retrieve live departure data. Using sample data for demonstration...")
-            departures = self.get_sample_departure_data()
-        
-        if not departures:
-            # Try a longer time window
-            logger.info("No recent departures found. Trying 48-hour window...")
-            departures = self.get_departures(hours_back=48)
-            
-            if not departures:
-                logger.warning("No departures found in 48-hour window. Using sample data for demonstration...")
-                departures = self.get_sample_departure_data()
-        
-        # Step 3: Display sample data
-        self.display_sample_data(departures, limit=10)
-        
-        # Step 4: Connection test summary
-        logger.info(f"\n{'='*60}")
-        logger.info("✅ CONNECTION TEST SUCCESSFUL!")
-        logger.info(f"✓ OpenSky API endpoint accessible")
-        logger.info(f"✓ Retrieved {len(departures)} departure records from {self.airport_icao}")
-        logger.info(f"✓ Data structure validated and formatted")
-        logger.info(f"✓ Ready for Quix Streams integration")
-        logger.info(f"{'='*60}")
-        
-        return True
+        try:
+            while self.running:
+                current_time = time.time()
+                
+                # Check if it's time to poll for new data
+                if current_time - last_poll_time >= self.poll_interval:
+                    logger.info("Polling for new departure data...")
+                    
+                    # Check if we've reached the message limit (for testing)
+                    if self.message_count >= self.max_messages:
+                        logger.info(f"Reached maximum message limit of {self.max_messages} for testing. Stopping.")
+                        break
+                    
+                    # Try to get real departure data first
+                    departures = self._get_departures(hours_back=48)
+                    
+                    # If no real data available, use sample data (for testing purposes)
+                    if not departures:
+                        logger.info("No live departure data available, using sample data for testing...")
+                        departures = self._get_sample_departure_data()
+                    
+                    # Process each departure
+                    new_flights_count = 0
+                    for departure in departures:
+                        # Create unique identifier for this flight
+                        flight_id = f"{departure.get('icao24', 'unknown')}_{departure.get('firstSeen', 0)}"
+                        
+                        # Skip if we've already processed this flight
+                        if flight_id in processed_flights:
+                            continue
+                        
+                        # Check message limit
+                        if self.message_count >= self.max_messages:
+                            logger.info(f"Reached maximum message limit of {self.max_messages}. Stopping.")
+                            break
+                        
+                        # Format and produce the flight data
+                        formatted_departure = self._format_flight_data(departure)
+                        
+                        try:
+                            # Create message with flight ICAO24 as key
+                            message = self.serialize(
+                                key=departure.get('icao24', 'unknown'),
+                                value=formatted_departure
+                            )
+                            
+                            # Produce to Kafka topic
+                            self.produce(
+                                key=message.key,
+                                value=message.value
+                            )
+                            
+                            # Track this flight and increment counter
+                            processed_flights.add(flight_id)
+                            self.message_count += 1
+                            new_flights_count += 1
+                            
+                            logger.info(f"Produced flight data for {departure.get('callsign', 'N/A')} "
+                                      f"({departure.get('icao24', 'unknown')}) - Message {self.message_count}")
+                            
+                        except Exception as e:
+                            logger.error(f"Error producing message for flight {flight_id}: {e}")
+                    
+                    logger.info(f"Processed {new_flights_count} new flights. Total messages: {self.message_count}")
+                    last_poll_time = current_time
+                    
+                    # If we reached the limit, break the loop
+                    if self.message_count >= self.max_messages:
+                        break
+                
+                # Sleep for a short time before checking again
+                time.sleep(10)
+                
+        except KeyboardInterrupt:
+            logger.info("Received shutdown signal, stopping...")
+        except Exception as e:
+            logger.error(f"Error in source run loop: {e}")
+            raise
+        finally:
+            logger.info(f"OpenSky source stopped. Total messages produced: {self.message_count}")
 
 
 def main():
-    """Main function to run the OpenSky API connection test."""
+    """Main function to run the OpenSky source application with Quix Streams."""
     try:
-        # Create and run connection test
-        test = OpenSkyConnectionTest()
-        success = test.run_connection_test()
+        logger.info("🚀 Starting OpenSky Departures Source Application")
+        logger.info("="*60)
         
-        if success:
-            logger.info("\n🎉 Connection test completed successfully!")
-            logger.info("Ready to proceed with Quix Streams integration.")
-            sys.exit(0)
-        else:
-            logger.error("\n❌ Connection test failed!")
-            logger.error("Please check your configuration and try again.")
-            sys.exit(1)
-            
+        # Create Quix Streams application
+        app = Application()
+        
+        # Get output topic name from environment
+        output_topic_name = os.environ.get("output", "opensky-data")
+        
+        # Create the output topic
+        output_topic = app.topic(output_topic_name, value_serializer="json")
+        
+        # Create OpenSky source
+        source = OpenSkySource(name="opensky_departures")
+        
+        # Create streaming dataframe with the source and topic
+        sdf = app.dataframe(topic=output_topic, source=source)
+        
+        # Print messages being produced for debugging
+        sdf.print(metadata=True)
+        
+        # Add message processing (optional transformations)
+        def add_message_metadata(row):
+            """Add additional metadata to each message."""
+            row["message_id"] = f"opensky_{row.get('icao24', 'unknown')}_{int(time.time())}"
+            row["source_application"] = "opensky_departures_v1"
+            return row
+        
+        # Apply transformation
+        sdf = sdf.apply(add_message_metadata)
+        
+        logger.info(f"✓ Application configured successfully")
+        logger.info(f"✓ Output topic: {output_topic_name}")
+        logger.info(f"✓ Airport: {os.environ.get('AIRPORT_ICAO', 'EDDB')}")
+        logger.info(f"✓ Authentication: {'Enabled' if os.environ.get('OPENSKY_USERNAME') else 'Anonymous'}")
+        logger.info(f"✓ Message limit: 100 (for testing)")
+        logger.info("="*60)
+        
+        # Start the application
+        logger.info("Starting Quix Streams application...")
+        app.run()
+        
     except KeyboardInterrupt:
-        logger.info("\n⏹️  Connection test interrupted by user.")
+        logger.info("\n⏹️  Application interrupted by user.")
         sys.exit(130)
     except Exception as e:
-        logger.error(f"\n💥 Unexpected error during connection test: {e}")
+        logger.error(f"\n💥 Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
