@@ -1,26 +1,30 @@
-name: gcpcsvv1
+name: gcs-solar-data-sink
 language: python
 variables:
-  - name: input
-    inputType: InputTopic
-    description: Name of the input topic to listen to.
-    defaultValue: solar-data
-  - name: GCS_PROJECT_ID
-    inputType: FreeText
-    defaultValue: quix-testing-365012
-    required: true
-  - name: GCS_FILE_PREFIX
-    inputType: FreeText
-    defaultValue: solar-data
-    required: true
-  - name: GCS_BUCKET_NAME
-    inputType: FreeText
-    defaultValue: quix-workflow
-    required: true
-  - name: GCS_CREDENTIALS_JSON
-    inputType: FreeText
-    defaultValue: GCLOUD_PK_JSON
-    required: true
+- name: input
+  inputType: InputTopic
+  description: Name of the input topic to listen to.
+  defaultValue: solar-data
+- name: GCS_BUCKET_NAME
+  inputType: FreeText
+  description: Name of the Google Cloud Storage bucket where solar data will be stored.
+  required: true
+  defaultValue: quix-workflow
+- name: GCS_PROJECT_ID
+  inputType: FreeText
+  description: Google Cloud Project ID for the GCS bucket.
+  required: true
+  defaultValue: quix-testing-365012
+- name: GCS_CREDENTIALS_JSON
+  inputType: Secret
+  description: Google Cloud Service Account credentials in JSON format.
+  required: true
+  defaultValue: GCLOUD_PK_JSON
+- name: GCS_FILE_PREFIX
+  inputType: FreeText
+  description: Prefix for files stored in the GCS bucket.
+  defaultValue: solar-data
+  required: false
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
