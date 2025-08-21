@@ -193,33 +193,6 @@ deployments:
       - name: GCS_FILE_PREFIX
         inputType: FreeText
         value: solar-data
-  - name: slackboy
-    application: slacktest
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
-    variables:
-      - name: SLACK_BOT_TOKEN
-        inputType: Secret
-        required: true
-        secretKey: SLACK_SECRET_KEY
-      - name: CHANNEL_NAME
-        inputType: FreeText
-        required: true
-        value: random
-      - name: output
-        inputType: OutputTopic
-        required: true
-        value: slack-data
-      - name: POLLING_INTERVAL
-        inputType: FreeText
-        value: 60
-      - name: MAX_MESSAGES
-        inputType: FreeText
-        value: 100
 
 # This section describes the Topics of the data pipeline
 topics:
