@@ -7,6 +7,7 @@ real-time Bitcoin transaction data. This is a connection test only - no Kafka in
 import os
 import json
 import time
+from websocket import WebSocketApp
 import websocket
 from datetime import datetime
 from typing import Dict, Any, List
@@ -165,7 +166,7 @@ class BlockchainWebSocketTester:
             # websocket.enableTrace(True)
             
             # Create WebSocket connection with callbacks
-            self.ws = websocket.WebSocketApp(
+            self.ws = WebSocketApp(
                 self.websocket_url,
                 on_open=self.on_open,
                 on_message=self.on_message,
