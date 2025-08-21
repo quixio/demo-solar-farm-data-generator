@@ -203,27 +203,6 @@ deployments:
         inputType: FreeText
         description: Name of the table to write solar panel data to
         value: solar_panel_data
-  - name: openwweathersynctest
-    application: openweatherv1
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
-    variables:
-      - name: OPENWEATHER_API_KEY
-        inputType: Secret
-        required: true
-        secretKey: OW_API_SECRET_KEY
-      - name: CITY_NAME
-        inputType: FreeText
-        required: true
-        value: Berlin
-      - name: output
-        inputType: OutputTopic
-        required: true
-        value: openweather-data
 
 # This section describes the Topics of the data pipeline
 topics:
