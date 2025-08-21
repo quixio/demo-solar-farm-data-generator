@@ -7,10 +7,10 @@ real-time Bitcoin transaction data. This is a connection test only - no Kafka in
 import os
 import json
 import time
-import websocket
-from websocket import WebSocketApp
 from datetime import datetime
 from typing import Dict, Any, List
+from websocket import WebSocketApp
+import websocket
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
