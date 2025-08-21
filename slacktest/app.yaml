@@ -1,25 +1,31 @@
-name: slacktest
+name: slack-source
 language: python
 variables:
-  - name: output
-    inputType: OutputTopic
-    description: Name of the output topic to write into
-    defaultValue: slack-data
-    required: true
-  - name: SLACK_BOT_TOKEN
-    inputType: FreeText
-    defaultValue: SLACK_SECRET_KEY
-  - name: CHANNEL_NAME
-    inputType: FreeText
-    defaultValue: random
-  - name: POLLING_INTERVAL
-    inputType: FreeText
-    defaultValue: 60
-    required: true
-  - name: MAX_MESSAGES
-    inputType: FreeText
-    defaultValue: 100
-    required: true
+- name: SLACK_BOT_TOKEN
+  inputType: Secret
+  description: Slack Bot Token (starts with xoxb-)
+  required: true
+  defaultValue: SLACK_SECRET_KEY
+- name: CHANNEL_NAME
+  inputType: FreeText
+  description: Name of the Slack channel to read from (without # prefix)
+  defaultValue: random
+  required: true
+- name: output
+  inputType: OutputTopic
+  description: Name of the output topic to write Slack messages to
+  defaultValue: slack-data
+  required: true
+- name: POLLING_INTERVAL
+  inputType: FreeText
+  description: How often to poll for new messages (in seconds)
+  defaultValue: "60"
+  required: false
+- name: MAX_MESSAGES
+  inputType: FreeText
+  description: Maximum number of messages to process (for testing)
+  defaultValue: "100"
+  required: false
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
