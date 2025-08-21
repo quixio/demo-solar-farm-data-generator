@@ -4,12 +4,22 @@ variables:
   - name: output
     inputType: OutputTopic
     description: Name of the output topic to write into
-    defaultValue: csv-data
+    defaultValue: slack-data
     required: true
   - name: SLACK_BOT_TOKEN
     inputType: FreeText
+    defaultValue: SLACK_SECRET_KEY
   - name: CHANNEL_NAME
     inputType: FreeText
+    defaultValue: random
+  - name: POLLING_INTERVAL
+    inputType: FreeText
+    defaultValue: 60
+    required: true
+  - name: MAX_MESSAGES
+    inputType: FreeText
+    defaultValue: 100
+    required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
