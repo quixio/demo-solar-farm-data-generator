@@ -4,12 +4,14 @@ variables:
   - name: output
     inputType: OutputTopic
     description: Name of the output topic to write into
-    defaultValue: csv-data
+    defaultValue: bitcoin-transactions
     required: true
   - name: SAMPLE_COUNT
     inputType: FreeText
+    defaultValue: 10
   - name: WEBSOCKET_URL
     inputType: FreeText
+    defaultValue: wss://ws.blockchain.info/inv
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
