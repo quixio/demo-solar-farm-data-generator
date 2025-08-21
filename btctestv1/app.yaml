@@ -1,13 +1,16 @@
-name: btctestv1
+name: bitcoin-transaction-source
 language: python
 variables:
-  - name: output
-    inputType: OutputTopic
-    description: Name of the output topic to write into
-    defaultValue: csv-data
-    required: true
-  - name: API_KEY
-    inputType: FreeText
+- name: output
+  inputType: OutputTopic
+  description: Name of the output topic to write into
+  defaultValue: bitcoin-blockchain-transactions
+  required: true
+- name: API_KEY
+  inputType: Secret
+  description: Blockchain.com API key (if required for enhanced features)
+  required: false
+  defaultValue: TSDB_SECRET_KEY
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
