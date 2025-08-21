@@ -4,7 +4,15 @@ variables:
   - name: output
     inputType: OutputTopic
     description: Name of the output topic to write into
-    defaultValue: csv-data
+    defaultValue: openweather-data
+    required: true
+  - name: OPENWEATHER_API_KEY
+    inputType: Secret
+    defaultValue: OW_API_SECRET_KEY
+    required: true
+  - name: CITY_NAME
+    inputType: FreeText
+    defaultValue: Berlin
     required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
