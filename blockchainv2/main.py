@@ -10,8 +10,9 @@ import json
 import time
 import threading
 from datetime import datetime
-import websocket
+# Import WebSocketApp from websocket-client package
 from websocket import WebSocketApp
+import websocket
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
