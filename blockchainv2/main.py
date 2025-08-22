@@ -3,6 +3,9 @@ import json
 import time
 import threading
 from datetime import datetime
+
+# Import WebSocketApp from websocket-client package
+import websocket
 from websocket import WebSocketApp
 
 # for local dev, you can load env vars from a .env file
