@@ -4,19 +4,22 @@ variables:
   - name: output
     inputType: OutputTopic
     description: Name of the output topic to write into
-    defaultValue: csv-data
+    defaultValue: bitcoin-blockchain-transactions
     required: true
   - name: SUBSCRIPTION_TYPE
     inputType: FreeText
+    defaultValue: unconfirmed_sub
   - name: CONNECTION_TIMEOUT
     inputType: FreeText
     defaultValue: 1
   - name: MAX_MESSAGES
     inputType: FreeText
+    defaultValue: 10
   - name: BITCOIN_ADDRESS
     inputType: FreeText
   - name: BLOCKCHAIN_WEBSOCKET_URL
     inputType: FreeText
+    defaultValue: wss://ws.blockchain.info/inv
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
