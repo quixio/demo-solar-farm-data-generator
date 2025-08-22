@@ -28,7 +28,8 @@ class BitcoinTransactionSource(Source):
         self.websocket_url = websocket_url
         self.subscription_type = subscription_type
         self.bitcoin_address = bitcoin_address
-        self.message_queue = Queue()
+        # Don't create non-serializable objects in __init__
+        self.message_queue = None
         self.ws = None
         self.ws_thread = None
         self.message_count = 0
@@ -54,9 +55,11 @@ class BitcoinTransactionSource(Source):
                 processed_data = self._transform_transaction_data(raw_data)
                 
                 if processed_data:
-                    self.message_queue.put(processed_data)
-                    self.message_count += 1
-                    print(f"✅ Transaction queued (#{self.message_count}): {processed_data.get('transactionHash', 'N/A')}")
+                    # Only queue if message_queue is initialized
+                    if self.message_queue is not None:
+                        self.message_queue.put(processed_data)
+                        self.message_count += 1
+                        print(f"✅ Transaction queued (#{self.message_count}): {processed_data.get('transactionHash', 'N/A')}")
                     
                     # Stop after max messages for testing
                     if self.message_count >= self.max_messages:
@@ -191,6 +194,9 @@ class BitcoinTransactionSource(Source):
         """Main source run method - required by Quix Streams Source"""
         print("🚀 Starting Bitcoin Transaction Source...")
         
+        # Initialize non-serializable objects here (not in __init__)
+        self.message_queue = Queue()
+        
         # Start WebSocket connection in a separate thread
         self.ws_thread = threading.Thread(target=self._start_websocket, daemon=True)
         self.ws_thread.start()
@@ -206,6 +212,9 @@ class BitcoinTransactionSource(Source):
             try:
                 # Get message from queue with timeout
                 try:
+                    if self.message_queue is None:
+                        time.sleep(0.1)
+                        continue
                     message = self.message_queue.get(timeout=0.1)
                     consecutive_empty_polls = 0
                     
