@@ -1,9 +1,25 @@
 import os
 import json
-import websocket
 import time
 import sys
 from datetime import datetime
+
+# Import websocket-client library
+# Note: websocket-client package provides the 'websocket' module
+try:
+    import websocket
+    from websocket import WebSocketApp
+    print(f"✅ WebSocket library loaded successfully from: {websocket.__file__}")
+except ImportError as e:
+    print(f"❌ WebSocket import error: {e}")
+    print("Missing websocket-client package - this should be installed via requirements.txt")
+    sys.exit(1)
+except AttributeError as e:
+    print(f"❌ WebSocket attribute error: {e}")
+    print("This likely means the wrong 'websocket' package is installed instead of 'websocket-client'")
+    print(f"Websocket module path: {websocket.__file__}")
+    print(f"Available attributes: {[attr for attr in dir(websocket) if not attr.startswith('_')]}")
+    sys.exit(1)
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
@@ -150,7 +166,7 @@ def test_blockchain_connection():
     try:
         # Create WebSocket connection
         print("🔗 Connecting to blockchain.com websocket...")
-        ws = websocket.WebSocketApp(
+        ws = WebSocketApp(
             websocket_url,
             on_open=on_open,
             on_message=on_message,
