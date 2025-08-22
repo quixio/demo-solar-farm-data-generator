@@ -1,5 +1,8 @@
 quixstreams==3.22.0
-python-dotenv
-quixstreams
-websocket
-websocket_client
+python-dotenv==1.0.0
+websocket-client==1.8.0
+requests==2.31.0
+
+# Critical: Only websocket-client should be installed
+# The 'websocket' package (PyPI: websocket) conflicts with websocket-client
+# If both are installed, Python may import the wrong websocket module
