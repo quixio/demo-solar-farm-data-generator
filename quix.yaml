@@ -193,22 +193,6 @@ deployments:
       - name: GCS_FILE_PREFIX
         inputType: FreeText
         value: solar-data
-  - name: bitcoinsheeit
-    application: btctestv1
-    version: latest
-    deploymentType: Service
-    resources:
-      cpu: 200
-      memory: 500
-      replicas: 1
-    variables:
-      - name: output
-        inputType: OutputTopic
-        required: true
-        value: bitcoin-blockchain-transactions
-      - name: API_KEY
-        inputType: Secret
-        secretKey: TSDB_SECRET_KEY
   - name: blockchain-stuff
     application: blockchainv2
     version: latest
