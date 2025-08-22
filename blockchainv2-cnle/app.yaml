@@ -1,11 +1,31 @@
-name: blockchainv2-cnle
+name: bitcoin-blockchain-source
 language: python
 variables:
-  - name: output
-    inputType: OutputTopic
-    description: Name of the output topic to write into
-    defaultValue: csv-data
-    required: true
+- name: WEBSOCKET_URL
+  inputType: FreeText
+  description: Blockchain.info WebSocket URL
+  defaultValue: wss://ws.blockchain.info/inv
+  required: true
+- name: SUBSCRIPTION_TYPE
+  inputType: FreeText
+  description: Type of subscription (unconfirmed_sub for all transactions, or addr_sub for specific address)
+  defaultValue: unconfirmed_sub
+  required: true
+- name: BITCOIN_ADDRESS
+  inputType: FreeText
+  description: Bitcoin address to monitor (only used if SUBSCRIPTION_TYPE is addr_sub)
+  defaultValue: ''
+  required: false
+- name: MAX_MESSAGES
+  inputType: FreeText
+  description: Maximum number of messages to process before stopping (for testing)
+  defaultValue: '100'
+  required: false
+- name: output
+  inputType: OutputTopic
+  description: Name of the output topic to write into
+  defaultValue: bitcoin-blockchain-transactions
+  required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
