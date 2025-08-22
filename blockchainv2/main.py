@@ -5,6 +5,13 @@ from quixstreams import Application
 from quixstreams.sources import Source
 
 import os
+import json
+import time
+import threading
+from datetime import datetime
+# Import WebSocketApp from websocket-client package
+from websocket import WebSocketApp
+import websocket
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
@@ -57,6 +64,39 @@ class MemoryUsageGenerator(Source):
                 print("Source finished producing messages.")
                 return
 
+    def connect(self):
+        """Establish WebSocket connection."""
+        try:
+            print("🔄 Connecting to blockchain.com WebSocket...")
+            
+            # Enable WebSocket debugging (optional)
+            # websocket.enableTrace(True)
+            
+            self.ws = WebSocketApp(
+                self.websocket_url,
+                on_message=self.on_message,
+                on_error=self.on_error,
+                on_close=self.on_close,
+                on_open=self.on_open
+            )
+            
+            # Set up timeout
+            def timeout_handler():
+                time.sleep(self.connection_timeout)
+                if self.sample_count < self.target_samples:
+                    print(f"\n⏰ Connection timeout ({self.connection_timeout}s) reached")
+                    print(f"   Collected {self.sample_count}/{self.target_samples} samples")
+                    self.disconnect()
+            
+            timeout_thread = threading.Thread(target=timeout_handler)
+            timeout_thread.daemon = True
+            timeout_thread.start()
+            
+            # Run the WebSocket connection
+            self.ws.run_forever()
+            
+        except Exception as e:
+            print(f"❌ Connection error: {e}")
 
 def main():
     """ Here we will set up our Application. """
