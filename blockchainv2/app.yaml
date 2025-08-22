@@ -4,12 +4,14 @@ variables:
   - name: output
     inputType: OutputTopic
     description: Name of the output topic to write into
-    defaultValue: csv-data
+    defaultValue: bitcoin-blockchain-transactions
     required: true
   - name: SUBSCRIPTION_TYPE
     inputType: FreeText
+    defaultValue: unconfirmed_sub
   - name: WEBSOCKET_URL
     inputType: FreeText
+    defaultValue: wss://ws.blockchain.info/inv
   - name: CONNECTION_TIMEOUT
     inputType: FreeText
     defaultValue: 1
