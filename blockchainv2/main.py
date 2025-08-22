@@ -4,22 +4,59 @@ import time
 import sys
 from datetime import datetime
 
-# Import websocket-client library
-# Note: websocket-client package provides the 'websocket' module
+# Import websocket-client library 
+# Strategy: Try multiple import approaches to handle package conflicts
+WebSocketApp = None
+
+# Approach 1: Try standard import from websocket module
 try:
     import websocket
-    from websocket import WebSocketApp
-    print(f"✅ WebSocket library loaded successfully from: {websocket.__file__}")
-except ImportError as e:
-    print(f"❌ WebSocket import error: {e}")
-    print("Missing websocket-client package - this should be installed via requirements.txt")
+    if hasattr(websocket, 'WebSocketApp'):
+        from websocket import WebSocketApp
+        print(f"✅ WebSocket-client library loaded via standard import from: {websocket.__file__}")
+    else:
+        print(f"⚠️ Standard websocket module found but missing WebSocketApp at: {websocket.__file__}")
+        websocket = None
+except ImportError:
+    print("⚠️ Standard websocket import failed")
+    websocket = None
+
+# Approach 2: If standard import failed, try alternative import strategies
+if WebSocketApp is None:
+    try:
+        # Try importing websocket_client directly (sometimes the package structure differs)
+        import websocket_client
+        WebSocketApp = websocket_client.WebSocketApp
+        print(f"✅ WebSocket-client library loaded via websocket_client import")
+    except (ImportError, AttributeError):
+        pass
+
+# Approach 3: Try importing from websocket._app (internal structure)
+if WebSocketApp is None:
+    try:
+        from websocket._app import WebSocketApp
+        print(f"✅ WebSocket-client library loaded via internal import")
+    except ImportError:
+        pass
+
+# Final check - if all approaches failed
+if WebSocketApp is None:
+    print("❌ CRITICAL: Cannot import WebSocketApp from any websocket package!")
+    print("\nDEBUGGING INFO:")
+    try:
+        import websocket
+        print(f"Standard websocket module found at: {websocket.__file__}")
+        print(f"Available attributes: {[attr for attr in dir(websocket) if not attr.startswith('_')]}")
+    except ImportError:
+        print("No websocket module found at all")
+    
+    print("\nSOLUTION:")
+    print("1. Ensure 'websocket-client==1.8.0' is in requirements.txt")
+    print("2. Make sure no conflicting 'websocket' package is installed")
+    print("3. Try rebuilding the container to refresh package installations")
     sys.exit(1)
-except AttributeError as e:
-    print(f"❌ WebSocket attribute error: {e}")
-    print("This likely means the wrong 'websocket' package is installed instead of 'websocket-client'")
-    print(f"Websocket module path: {websocket.__file__}")
-    print(f"Available attributes: {[attr for attr in dir(websocket) if not attr.startswith('_')]}")
-    sys.exit(1)
+
+print(f"✅ WebSocketApp successfully imported and ready to use")
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
