@@ -133,8 +133,8 @@ class BlockchainWebSocketTester:
         print("=" * 60)
         
         try:
-            # Enable WebSocket debugging for more verbose output
-            websocket.enableTrace(False)
+            # Note: enableTrace is not available in websocket-client 1.6.4
+            # Skipping WebSocket debugging configuration
             
             # Create WebSocket connection
             self.ws = websocket.WebSocketApp(
