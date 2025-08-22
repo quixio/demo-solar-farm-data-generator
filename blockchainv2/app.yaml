@@ -14,6 +14,8 @@ variables:
   - name: SUBSCRIPTION_TYPE
     inputType: FreeText
     defaultValue: unconfirmed_sub
+  - name: MAX_MESSAGES
+    inputType: FreeText
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
