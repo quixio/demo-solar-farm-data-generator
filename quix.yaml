@@ -209,6 +209,33 @@ deployments:
       - name: API_KEY
         inputType: Secret
         secretKey: TSDB_SECRET_KEY
+  - name: blockchain-stuff
+    application: blockchainv2
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 200
+      memory: 500
+      replicas: 1
+    variables:
+      - name: WEBSOCKET_URL
+        inputType: FreeText
+        required: true
+        value: wss://ws.blockchain.info/inv
+      - name: SUBSCRIPTION_TYPE
+        inputType: FreeText
+        required: true
+        value: unconfirmed_sub
+      - name: BITCOIN_ADDRESS
+        inputType: FreeText
+        value: ''
+      - name: MAX_MESSAGES
+        inputType: FreeText
+        value: 100
+      - name: output
+        inputType: OutputTopic
+        required: true
+        value: bitcoin-blockchain-transactions
 
 # This section describes the Topics of the data pipeline
 topics:
