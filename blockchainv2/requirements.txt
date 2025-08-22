@@ -2,3 +2,4 @@ quixstreams==3.22.0
 python-dotenv
 quixstreams
 websocket
+websocket_client
