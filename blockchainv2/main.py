@@ -11,6 +11,7 @@ import time
 import threading
 from datetime import datetime
 import websocket
+from websocket import WebSocketApp
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
@@ -205,7 +206,7 @@ class BlockchainWebSocketTester:
             # Enable WebSocket debugging (optional)
             # websocket.enableTrace(True)
             
-            self.ws = websocket.WebSocketApp(
+            self.ws = WebSocketApp(
                 self.websocket_url,
                 on_message=self.on_message,
                 on_error=self.on_error,
