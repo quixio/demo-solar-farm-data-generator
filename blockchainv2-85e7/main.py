@@ -104,8 +104,14 @@ BLOCK DATA:
         try:
             print("Attempting to connect to blockchain.com WebSocket...")
             
-            async with websockets.connect(
-                self.websocket_url,
+            # Use asyncio.wait_for for connection timeout and correct websockets parameters
+            async with await asyncio.wait_for(
+                websockets.connect(
+                    self.websocket_url,
+                    open_timeout=self.connection_timeout,
+                    ping_timeout=self.connection_timeout,
+                    ping_interval=20
+                ),
                 timeout=self.connection_timeout
             ) as websocket:
                 
