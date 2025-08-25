@@ -1,17 +1,26 @@
-name: alphavantagev4
+name: forex-data-source
 language: python
 variables:
-  - name: output
-    inputType: OutputTopic
-    description: Name of the output topic to write into
-    defaultValue: csv-data
-    required: true
-  - name: API_KEY
-    inputType: FreeText
-  - name: from_currency
-    inputType: FreeText
-  - name: to_currency
-    inputType: FreeText
+- name: API_KEY
+  inputType: Secret
+  description: Alpha Vantage API key for accessing forex data
+  required: true
+  defaultValue: AV_API_KEY
+- name: from_currency
+  inputType: FreeText
+  description: Source currency code (e.g., EUR)
+  defaultValue: EUR
+  required: true
+- name: to_currency
+  inputType: FreeText
+  description: Target currency code (e.g., THB)
+  defaultValue: THB
+  required: true
+- name: output
+  inputType: OutputTopic
+  description: Name of the output topic to write into
+  defaultValue: stock-data
+  required: true
 dockerfile: dockerfile
 runEntryPoint: main.py
 defaultFile: main.py
