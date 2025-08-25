@@ -1,8 +1,6 @@
 # Import the Quix Streams modules for interacting with Kafka.
 # For general info, see https://quix.io/docs/quix-streams/introduction.html
-# For sources, see https://quix.io/docs/quix-streams/connectors/sources/index.html
 from quixstreams import Application
-from quixstreams.sources import Source
 
 import os
 import requests
@@ -15,24 +13,26 @@ from typing import Dict, Any
 # load_dotenv()
 
 
-class ForexDataSource(Source):
+class ForexDataProducer:
     """
-    A Quix Streams Source that reads forex exchange rates from Alpha Vantage API.
+    A Forex data producer that reads forex exchange rates from Alpha Vantage API
+    and produces them to a Kafka topic.
     
     Retrieves EUR to THB exchange rates and produces them to a Kafka topic.
     """
 
-    def __init__(self, api_key: str, from_currency: str = "EUR", to_currency: str = "THB", poll_interval: int = 300):
+    def __init__(self, app: Application, api_key: str, from_currency: str = "EUR", to_currency: str = "THB", poll_interval: int = 300):
         """
-        Initialize the Forex data source.
+        Initialize the Forex data producer.
         
         Args:
+            app: QuixStreams Application instance
             api_key: Alpha Vantage API key
             from_currency: Source currency code (default: EUR)
             to_currency: Target currency code (default: THB) 
             poll_interval: Time between API calls in seconds (default: 300)
         """
-        super().__init__(name="forex-data-source")
+        self.app = app
         self.api_key = api_key
         self.from_currency = from_currency
         self.to_currency = to_currency
@@ -40,8 +40,9 @@ class ForexDataSource(Source):
         self.base_url = "https://www.alphavantage.co/query"
         self.messages_sent = 0
         self.max_messages = 100  # Limit for testing
+        self.running = True
         
-        print(f"🔧 Forex Source Configuration:")
+        print(f"🔧 Forex Producer Configuration:")
         print(f"   From Currency: {self.from_currency}")
         print(f"   To Currency: {self.to_currency}")
         print(f"   Poll Interval: {self.poll_interval} seconds")
@@ -121,53 +122,61 @@ class ForexDataSource(Source):
             print(f"❌ Error transforming data: {e}")
             return None
 
-    def run(self):
+    def run(self, output_topic):
         """
-        Main execution method for the Source.
+        Main execution method for the Producer.
         
         Continuously fetches forex data and produces to Kafka topic.
         """
-        print("🚀 Starting Forex data source...")
+        print("🚀 Starting Forex data producer...")
         
-        while self.running and self.messages_sent < self.max_messages:
-            try:
-                # Get current exchange rate
-                api_data = self.get_current_exchange_rate()
-                
-                # Transform to Kafka message format
-                kafka_message = self.transform_to_kafka_message(api_data)
-                
-                if kafka_message:
-                    # Create a key from the currency pair
-                    message_key = f"{kafka_message['fromCurrency']}-{kafka_message['toCurrency']}"
+        with self.app.get_producer() as producer:
+            while self.running and self.messages_sent < self.max_messages:
+                try:
+                    # Get current exchange rate
+                    api_data = self.get_current_exchange_rate()
                     
-                    # Serialize and produce to Kafka
-                    event_serialized = self.serialize(key=message_key, value=kafka_message)
-                    self.produce(key=event_serialized.key, value=event_serialized.value)
+                    # Transform to Kafka message format
+                    kafka_message = self.transform_to_kafka_message(api_data)
                     
-                    self.messages_sent += 1
-                    print(f"✅ Produced forex message {self.messages_sent}/{self.max_messages} - Rate: {kafka_message['exchangeRate']}")
-                else:
-                    print("⚠️  Skipped message due to transformation error")
-                
-                # Wait before next API call to respect rate limits
-                if self.running and self.messages_sent < self.max_messages:
-                    print(f"⏳ Waiting {self.poll_interval} seconds before next fetch...")
-                    time.sleep(self.poll_interval)
+                    if kafka_message:
+                        # Create a key from the currency pair
+                        message_key = f"{kafka_message['fromCurrency']}-{kafka_message['toCurrency']}"
+                        
+                        # Serialize and produce to Kafka
+                        serialized_message = output_topic.serialize(
+                            key=message_key,
+                            value=kafka_message
+                        )
+                        producer.produce(
+                            topic=output_topic.name,
+                            key=serialized_message.key,
+                            value=serialized_message.value
+                        )
+                        
+                        self.messages_sent += 1
+                        print(f"✅ Produced forex message {self.messages_sent}/{self.max_messages} - Rate: {kafka_message['exchangeRate']}")
+                    else:
+                        print("⚠️  Skipped message due to transformation error")
                     
-            except Exception as e:
-                print(f"❌ Error in forex source: {e}")
-                print(f"⏳ Waiting {self.poll_interval} seconds before retry...")
-                if self.running:
-                    time.sleep(self.poll_interval)
+                    # Wait before next API call to respect rate limits
+                    if self.running and self.messages_sent < self.max_messages:
+                        print(f"⏳ Waiting {self.poll_interval} seconds before next fetch...")
+                        time.sleep(self.poll_interval)
+                        
+                except Exception as e:
+                    print(f"❌ Error in forex producer: {e}")
+                    print(f"⏳ Waiting {self.poll_interval} seconds before retry...")
+                    if self.running:
+                        time.sleep(self.poll_interval)
         
-        print(f"🏁 Forex source finished. Produced {self.messages_sent} messages.")
+        print(f"🏁 Forex producer finished. Produced {self.messages_sent} messages.")
 
 
 def main():
-    """Main function to set up and run the Forex data source."""
+    """Main function to set up and run the Forex data producer."""
     try:
-        print("🚀 Starting Forex Data Source Application...")
+        print("🚀 Starting Forex Data Producer Application...")
         print()
         
         # Get environment variables
@@ -183,32 +192,24 @@ def main():
         # Setup Quix Streams Application
         app = Application(consumer_group="forex_data_producer", auto_create_topics=True)
         
-        # Create the forex data source
-        forex_source = ForexDataSource(
+        # Create output topic
+        output_topic = app.topic(name=output_topic_name)
+        
+        # Create the forex data producer
+        forex_producer = ForexDataProducer(
+            app=app,
             api_key=api_key,
             from_currency=from_currency,
             to_currency=to_currency,
             poll_interval=300  # 5 minutes between API calls
         )
         
-        # Create output topic
-        output_topic = app.topic(name=output_topic_name)
-        
-        # Setup dataframe for additional processing and debugging
-        sdf = app.dataframe(source=forex_source)
-        
-        # Add debug printing
-        sdf.print(metadata=True)
-        
-        # Send to output topic
-        sdf.to_topic(output_topic)
-        
         print(f"📤 Output topic: {output_topic_name}")
-        print("🎯 Starting application - press Ctrl+C to stop")
+        print("🎯 Starting producer - press Ctrl+C to stop")
         print()
         
-        # Run the application
-        app.run()
+        # Run the producer
+        forex_producer.run(output_topic)
         
     except KeyboardInterrupt:
         print("\n⚠️  Application stopped by user")
@@ -217,6 +218,5 @@ def main():
         raise
 
 
-# Sources require execution under a conditional main
 if __name__ == "__main__":
     main()
