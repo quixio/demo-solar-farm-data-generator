@@ -220,7 +220,7 @@ deployments:
         inputType: OutputTopic
         required: true
         value: bitcoin-blockchain-transactions
-  - name: a?lphav4a
+  - name: alphav4a
     application: alphavantagev4
     version: latest
     deploymentType: Service
@@ -231,18 +231,22 @@ deployments:
     variables:
       - name: API_KEY
         inputType: Secret
+        description: Alpha Vantage API key for accessing forex data
         required: true
         secretKey: AV_API_KEY
       - name: from_currency
         inputType: FreeText
+        description: Source currency code (e.g., EUR)
         required: true
         value: EUR
       - name: to_currency
         inputType: FreeText
+        description: Target currency code (e.g., THB)
         required: true
         value: THB
       - name: output
         inputType: OutputTopic
+        description: Name of the output topic to write into
         required: true
         value: stock-data
 
