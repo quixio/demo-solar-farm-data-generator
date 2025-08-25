@@ -1,42 +1,50 @@
-"""
-Forex Data Connection Test
-
-This script tests the connection to Alpha Vantage forex API to retrieve EUR to THB exchange rates.
-This is a connection test only - no Kafka/Quix Streams integration yet.
-"""
+# Import the Quix Streams modules for interacting with Kafka.
+# For general info, see https://quix.io/docs/quix-streams/introduction.html
+# For sources, see https://quix.io/docs/quix-streams/connectors/sources/index.html
+from quixstreams import Application
+from quixstreams.sources import Source
 
 import os
-import sys
-import time
 import requests
+import time
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 # for local dev, you can load env vars from a .env file
 # from dotenv import load_dotenv
 # load_dotenv()
 
 
-class ForexConnectionTester:
+class ForexDataSource(Source):
     """
-    Test connection to Alpha Vantage API for forex exchange rates.
-    Retrieves sample EUR to THB exchange rate data.
-    """
+    A Quix Streams Source that reads forex exchange rates from Alpha Vantage API.
     
-    def __init__(self):
-        """Initialize the forex connection tester with required configuration."""
-        self.api_key = os.environ.get("API_KEY")
-        self.from_currency = os.environ.get("from_currency", "EUR")
-        self.to_currency = os.environ.get("to_currency", "THB")
-        self.base_url = "https://www.alphavantage.co/query"
+    Retrieves EUR to THB exchange rates and produces them to a Kafka topic.
+    """
+
+    def __init__(self, api_key: str, from_currency: str = "EUR", to_currency: str = "THB", poll_interval: int = 300):
+        """
+        Initialize the Forex data source.
         
-        # Validate required environment variables
-        if not self.api_key:
-            raise ValueError("API_KEY environment variable is required")
-            
-        print(f"🔧 Configuration:")
+        Args:
+            api_key: Alpha Vantage API key
+            from_currency: Source currency code (default: EUR)
+            to_currency: Target currency code (default: THB) 
+            poll_interval: Time between API calls in seconds (default: 300)
+        """
+        super().__init__()
+        self.api_key = api_key
+        self.from_currency = from_currency
+        self.to_currency = to_currency
+        self.poll_interval = poll_interval
+        self.base_url = "https://www.alphavantage.co/query"
+        self.messages_sent = 0
+        self.max_messages = 100  # Limit for testing
+        
+        print(f"🔧 Forex Source Configuration:")
         print(f"   From Currency: {self.from_currency}")
         print(f"   To Currency: {self.to_currency}")
+        print(f"   Poll Interval: {self.poll_interval} seconds")
         print(f"   API Key: {'*' * (len(self.api_key) - 4) + self.api_key[-4:] if len(self.api_key) > 4 else '****'}")
         print()
 
@@ -55,10 +63,12 @@ class ForexConnectionTester:
         }
         
         try:
+            print(f"📡 Fetching exchange rate: {self.from_currency} -> {self.to_currency}")
             response = requests.get(self.base_url, params=params, timeout=30)
             response.raise_for_status()
             
             data = response.json()
+            print(f"🔍 Raw API response structure: {list(data.keys()) if isinstance(data, dict) else type(data)}")
             
             # Check for API errors
             if "Error Message" in data:
@@ -73,156 +83,140 @@ class ForexConnectionTester:
         except Exception as e:
             raise Exception(f"Failed to retrieve current exchange rate: {e}")
 
-    def get_daily_forex_data(self, output_size: str = "compact") -> Dict[str, Any]:
+    def transform_to_kafka_message(self, api_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Retrieve daily forex time series data.
+        Transform API response data into Kafka message format based on schema.
         
         Args:
-            output_size: "compact" (last 100 data points) or "full" (full history)
+            api_data: Raw data from Alpha Vantage API
             
         Returns:
-            Dict containing daily forex time series data
+            Dict formatted for Kafka message
         """
-        params = {
-            "function": "FX_DAILY",
-            "from_symbol": self.from_currency,
-            "to_symbol": self.to_currency,
-            "outputsize": output_size,
-            "apikey": self.api_key
-        }
-        
         try:
-            response = requests.get(self.base_url, params=params, timeout=30)
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            # Check for API errors
-            if "Error Message" in data:
-                raise Exception(f"API Error: {data['Error Message']}")
-            if "Note" in data:
-                print(f"⚠️  API Note: {data['Note']}")
+            if "Realtime Currency Exchange Rate" in api_data:
+                rate_info = api_data["Realtime Currency Exchange Rate"]
                 
-            return data
-            
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"HTTP request failed: {e}")
+                # Transform to the schema format identified in documentation
+                kafka_message = {
+                    "eventType": "forexDataRetrieval",
+                    "timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "fromCurrency": rate_info.get("1. From_Currency Code", self.from_currency),
+                    "toCurrency": rate_info.get("3. To_Currency Code", self.to_currency),
+                    "exchangeRate": float(rate_info.get("5. Exchange Rate", 0)),
+                    "lastRefreshed": rate_info.get("6. Last Refreshed", "") + "Z",  # Add Z for UTC
+                    "timeZone": rate_info.get("7. Time Zone", "UTC"),
+                    "fromCurrencyName": rate_info.get("2. From_Currency Name", ""),
+                    "toCurrencyName": rate_info.get("4. To_Currency Name", ""),
+                    "source": "AlphaVantage"
+                }
+                
+                print(f"💱 Transformed message: {kafka_message['fromCurrency']} -> {kafka_message['toCurrency']}: {kafka_message['exchangeRate']}")
+                return kafka_message
+            else:
+                print(f"❌ Unexpected API response structure: {list(api_data.keys()) if isinstance(api_data, dict) else type(api_data)}")
+                return None
+                
         except Exception as e:
-            raise Exception(f"Failed to retrieve daily forex data: {e}")
+            print(f"❌ Error transforming data: {e}")
+            return None
 
-    def format_current_rate(self, data: Dict[str, Any]) -> None:
-        """Format and display current exchange rate information."""
-        if "Realtime Currency Exchange Rate" not in data:
-            print("❌ No exchange rate data found in response")
-            return
-            
-        rate_info = data["Realtime Currency Exchange Rate"]
-        
-        print("💱 CURRENT EXCHANGE RATE:")
-        print(f"   From: {rate_info.get('2. From_Currency Name', 'N/A')} ({rate_info.get('1. From_Currency Code', 'N/A')})")
-        print(f"   To: {rate_info.get('4. To_Currency Name', 'N/A')} ({rate_info.get('3. To_Currency Code', 'N/A')})")
-        print(f"   Rate: {float(rate_info.get('5. Exchange Rate', 0)):.6f}")
-        print(f"   Last Refreshed: {rate_info.get('6. Last Refreshed', 'N/A')} UTC")
-        print(f"   Time Zone: {rate_info.get('7. Time Zone', 'N/A')}")
-        print()
-
-    def format_daily_rates(self, data: Dict[str, Any], limit: int = 10) -> None:
-        """Format and display daily forex rate samples."""
-        if "Time Series (Daily)" not in data:
-            print("❌ No daily time series data found in response")
-            return
-            
-        meta_data = data.get("Meta Data", {})
-        time_series = data["Time Series (Daily)"]
-        
-        print("📊 FOREX METADATA:")
-        for key, value in meta_data.items():
-            print(f"   {key}: {value}")
-        print()
-        
-        print(f"📈 DAILY EXCHANGE RATES (Showing {min(limit, len(time_series))} most recent):")
-        print(f"   {'Date':<12} {'Open':<10} {'High':<10} {'Low':<10} {'Close':<10}")
-        print(f"   {'-'*12} {'-'*10} {'-'*10} {'-'*10} {'-'*10}")
-        
-        # Sort dates in descending order and take the first `limit` entries
-        sorted_dates = sorted(time_series.keys(), reverse=True)
-        
-        for i, date in enumerate(sorted_dates[:limit]):
-            rates = time_series[date]
-            print(f"   {date:<12} {float(rates['1. open']):<10.6f} {float(rates['2. high']):<10.6f} {float(rates['3. low']):<10.6f} {float(rates['4. close']):<10.6f}")
-        
-        print()
-        print(f"📈 Total available data points: {len(time_series)}")
-        print()
-
-    def test_connection(self) -> bool:
+    def run(self):
         """
-        Test the connection to Alpha Vantage API and retrieve sample data.
+        Main execution method for the Source.
         
-        Returns:
-            True if connection test successful, False otherwise
+        Continuously fetches forex data and produces to Kafka topic.
         """
-        print("🔍 FOREX DATA CONNECTION TEST")
-        print("=" * 50)
+        print("🚀 Starting Forex data source...")
         
-        try:
-            # Test 1: Current exchange rate
-            print("📡 Testing current exchange rate retrieval...")
-            current_rate_data = self.get_current_exchange_rate()
-            print("✅ Successfully retrieved current exchange rate")
-            self.format_current_rate(current_rate_data)
-            
-            # Brief pause between API calls to respect rate limits
-            time.sleep(1)
-            
-            # Test 2: Daily historical data
-            print("📡 Testing daily historical data retrieval...")
-            daily_data = self.get_daily_forex_data()
-            print("✅ Successfully retrieved daily forex data")
-            self.format_daily_rates(daily_data, limit=10)
-            
-            print("🎉 CONNECTION TEST SUCCESSFUL!")
-            print("   ✅ API authentication working")
-            print("   ✅ Data retrieval functioning")
-            print("   ✅ Response parsing successful")
-            print("   ✅ Sample data retrieved and formatted")
-            print()
-            print("💡 Next steps: This data structure can be used for Kafka integration")
-            
-            return True
-            
-        except Exception as e:
-            print(f"❌ CONNECTION TEST FAILED: {e}")
-            print()
-            print("🔧 Troubleshooting tips:")
-            print("   • Verify API_KEY environment variable is set correctly")
-            print("   • Check Alpha Vantage account status and rate limits")
-            print("   • Ensure currency codes are valid (EUR, THB)")
-            print("   • Check internet connectivity")
-            
-            return False
+        while self.running and self.messages_sent < self.max_messages:
+            try:
+                # Get current exchange rate
+                api_data = self.get_current_exchange_rate()
+                
+                # Transform to Kafka message format
+                kafka_message = self.transform_to_kafka_message(api_data)
+                
+                if kafka_message:
+                    # Create a key from the currency pair
+                    message_key = f"{kafka_message['fromCurrency']}-{kafka_message['toCurrency']}"
+                    
+                    # Serialize and produce to Kafka
+                    event_serialized = self.serialize(key=message_key, value=kafka_message)
+                    self.produce(key=event_serialized.key, value=event_serialized.value)
+                    
+                    self.messages_sent += 1
+                    print(f"✅ Produced forex message {self.messages_sent}/{self.max_messages} - Rate: {kafka_message['exchangeRate']}")
+                else:
+                    print("⚠️  Skipped message due to transformation error")
+                
+                # Wait before next API call to respect rate limits
+                if self.running and self.messages_sent < self.max_messages:
+                    print(f"⏳ Waiting {self.poll_interval} seconds before next fetch...")
+                    time.sleep(self.poll_interval)
+                    
+            except Exception as e:
+                print(f"❌ Error in forex source: {e}")
+                print(f"⏳ Waiting {self.poll_interval} seconds before retry...")
+                if self.running:
+                    time.sleep(self.poll_interval)
+        
+        print(f"🏁 Forex source finished. Produced {self.messages_sent} messages.")
 
 
 def main():
-    """Main function to run the forex connection test."""
+    """Main function to set up and run the Forex data source."""
     try:
-        print("🚀 Starting Forex Data Connection Test...")
+        print("🚀 Starting Forex Data Source Application...")
         print()
         
-        # Initialize and run the connection test
-        tester = ForexConnectionTester()
-        success = tester.test_connection()
+        # Get environment variables
+        api_key = os.environ.get("API_KEY")
+        from_currency = os.environ.get("from_currency", "EUR")
+        to_currency = os.environ.get("to_currency", "THB")
+        output_topic_name = os.environ.get("output", "stock-data")
         
-        # Exit with appropriate code
-        sys.exit(0 if success else 1)
+        # Validate required environment variables
+        if not api_key:
+            raise ValueError("API_KEY environment variable is required")
+        
+        # Setup Quix Streams Application
+        app = Application(consumer_group="forex_data_producer", auto_create_topics=True)
+        
+        # Create the forex data source
+        forex_source = ForexDataSource(
+            api_key=api_key,
+            from_currency=from_currency,
+            to_currency=to_currency,
+            poll_interval=300  # 5 minutes between API calls
+        )
+        
+        # Create output topic
+        output_topic = app.topic(name=output_topic_name)
+        
+        # Setup dataframe for additional processing and debugging
+        sdf = app.dataframe(source=forex_source)
+        
+        # Add debug printing
+        sdf.print(metadata=True)
+        
+        # Send to output topic
+        sdf.to_topic(output_topic)
+        
+        print(f"📤 Output topic: {output_topic_name}")
+        print("🎯 Starting application - press Ctrl+C to stop")
+        print()
+        
+        # Run the application
+        app.run()
         
     except KeyboardInterrupt:
-        print("\n⚠️  Test interrupted by user")
-        sys.exit(1)
+        print("\n⚠️  Application stopped by user")
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        sys.exit(1)
+        print(f"❌ Application error: {e}")
+        raise
 
 
+# Sources require execution under a conditional main
 if __name__ == "__main__":
     main()
