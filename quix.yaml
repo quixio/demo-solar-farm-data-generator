@@ -220,6 +220,31 @@ deployments:
         inputType: OutputTopic
         required: true
         value: bitcoin-blockchain-transactions
+  - name: a?lphav4a
+    application: alphavantagev4
+    version: latest
+    deploymentType: Service
+    resources:
+      cpu: 200
+      memory: 500
+      replicas: 1
+    variables:
+      - name: API_KEY
+        inputType: Secret
+        required: true
+        secretKey: AV_API_KEY
+      - name: from_currency
+        inputType: FreeText
+        required: true
+        value: EUR
+      - name: to_currency
+        inputType: FreeText
+        required: true
+        value: THB
+      - name: output
+        inputType: OutputTopic
+        required: true
+        value: stock-data
 
 # This section describes the Topics of the data pipeline
 topics:
