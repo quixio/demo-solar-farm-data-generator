@@ -32,7 +32,7 @@ class ForexDataSource(Source):
             to_currency: Target currency code (default: THB) 
             poll_interval: Time between API calls in seconds (default: 300)
         """
-        super().__init__()
+        super().__init__(name="forex-data-source")
         self.api_key = api_key
         self.from_currency = from_currency
         self.to_currency = to_currency
