@@ -1,2 +1,3 @@
-quixstreams==3.14.1
+quixstreams
+requests==2.31.0
 python-dotenv
